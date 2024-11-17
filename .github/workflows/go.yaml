@@ -1,0 +1,26 @@
+name: Go
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+  push:
+    branches:
+      - master
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Go
+      uses: actions/setup-go@v5
+    
+    - name: Download dependencies
+      run: go download
+
+    - name: Test
+      run: go test ./...
