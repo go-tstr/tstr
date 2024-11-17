@@ -3,16 +3,14 @@ package tstr
 import (
 	"errors"
 	"fmt"
+
+	"github.com/go-tstr/tstr/strerr"
 )
 
 const (
-	ErrStartFailed = staticError("failed to start test dependencies")
-	ErrStopFailed  = staticError("failed to stop test dependencies")
+	ErrStartFailed = strerr.Error("failed to start test dependencies")
+	ErrStopFailed  = strerr.Error("failed to stop test dependencies")
 )
-
-type staticError string
-
-func (e staticError) Error() string { return string(e) }
 
 type Runner struct {
 	runnables  []Dependency

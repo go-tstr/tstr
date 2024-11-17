@@ -7,23 +7,26 @@ import (
 	"os"
 	"reflect"
 	"testing"
+
+	"github.com/go-tstr/tstr/strerr"
 )
 
 const (
-	ErrMissingTestFn     = staticError("missing Opt for test function")
-	ErrOverwritingTestFn = staticError("trying to overwrite test function")
-	ErrMissingNameField  = staticError("missing field Name in test case struct")
-	ErrWrongTestCaseType = staticError("wrong test case type")
+	ErrMissingTestFn     = strerr.Error("missing Opt for test function")
+	ErrOverwritingTestFn = strerr.Error("trying to overwrite test function")
+	ErrMissingNameField  = strerr.Error("missing field Name in test case struct")
+	ErrWrongTestCaseType = strerr.Error("wrong test case type")
 )
 
-type (
-	TestingM interface {
-		Run() int
-	}
-	TestingT interface {
-		Run(name string, fn func(*testing.T)) bool
-	}
-)
+// TestingM contains required methods from *testing.M.
+type TestingM interface {
+	Run() int
+}
+
+// TestingT contains required methods from *testing.T.
+type TestingT interface {
+	Run(name string, fn func(*testing.T)) bool
+}
 
 // exit is allows monkey-patching os.Exit in tests.
 var exit = os.Exit
