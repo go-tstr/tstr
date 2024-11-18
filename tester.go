@@ -28,16 +28,17 @@ type TestingT interface {
 	Run(name string, fn func(*testing.T)) bool
 }
 
-// exit is allows monkey-patching os.Exit in tests.
+// exit allows monkey-patching os.Exit in tests.
 var exit = os.Exit
 
 // Run runs the test with the given options.
 // Options are applied in the order they are passed.
 // One of the options must provide the test function.
+//
 // Options that provide the test function:
-// - WithM
-// - WithFn
-// - WithTable
+//   - WithM
+//   - WithFn
+//   - WithTable
 func Run(opts ...Opt) error {
 	t := NewTester(opts...)
 	if err := t.Init(); err != nil {
@@ -49,7 +50,8 @@ func Run(opts ...Opt) error {
 // RunMain is a convinience wrapper around Run that can be used inside TestMain.
 // RunMain applies automatically WithM option which calls m.Run.
 // Also os.Exit is called with non-zero exit code if Run returns any error.
-// Example TestMain:
+//
+// Example:
 //
 //	func TestMain(m *testing.M) {
 //		tstr.RunMain(m, tstr.WithDeps(MyDependency()))

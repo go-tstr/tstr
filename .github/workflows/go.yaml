@@ -23,4 +23,9 @@ jobs:
       run: go mod download
 
     - name: Test
-      run: go test ./...
+      run: go test -coverprofile=coverage.txt ./...
+      
+    - name: Upload results to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
