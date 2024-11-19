@@ -1,6 +1,7 @@
 package cmd_test
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,11 +15,11 @@ import (
 )
 
 func TestCmd(t *testing.T) {
-	testBin := prepareBin(t)
+	waitPkg := prepareCode(t)
+	waitBin := waitPkg + "/main"
 
 	tests := []struct {
 		name string
-		fn   func() error
 		cmd  *cmd.Cmd
 		err  error
 	}{
@@ -50,21 +51,6 @@ func TestCmd(t *testing.T) {
 			),
 		},
 		{
-			name: "DefaultStopFn",
-			cmd: cmd.New(
-				cmd.WithCommand(testBin),
-				cmd.WithWaitMatchingLine("Waiting for signal"),
-			),
-		},
-		{
-			name: "CustomStopFn",
-			cmd: cmd.New(
-				cmd.WithCommand(testBin),
-				cmd.WithWaitMatchingLine("Waiting for signal"),
-				cmd.WithStopFn(cmd.StopWithSignal(syscall.SIGTERM)),
-			),
-		},
-		{
 			name: "NoMatchingLine",
 			cmd: cmd.New(
 				cmd.WithCommand("go", "version"),
@@ -83,7 +69,7 @@ func TestCmd(t *testing.T) {
 		{
 			name: "ReadyTimeoutExceeded",
 			cmd: cmd.New(
-				cmd.WithCommand("sleep", "100"),
+				cmd.WithCommand("go", "env"),
 				cmd.WithReadyFn(blockForever),
 				cmd.WithReadyTimeout(1),
 			),
@@ -97,12 +83,12 @@ func TestCmd(t *testing.T) {
 			err: cmd.ErrNilCmdRegexp,
 		},
 		{
-			name: "WithDir",
+			name: "WithBuildCmd_error",
 			cmd: cmd.New(
-				cmd.WithCommand("./"+filepath.Base(testBin)),
-				cmd.WithDir(filepath.Dir(testBin)),
-				cmd.WithWaitMatchingLine("Waiting for signal"),
+				cmd.WithPreCmd(exec.Command("go", "build", "non/existing/path/main.go")),
+				cmd.WithCommand("non/existing/path/main"),
 			),
+			err: cmd.ErrPreCmdFailed,
 		},
 		{
 			name: "WithEnv",
@@ -112,29 +98,106 @@ func TestCmd(t *testing.T) {
 				cmd.WithWaitMatchingLine("foo"),
 			),
 		},
-
 		{
 			name: "WithExecCmd",
 			cmd: cmd.New(
-				cmd.WithExecCmd(func() *exec.Cmd { return exec.Command("go", "version") }()),
+				cmd.WithExecCmd(exec.Command("go", "version")),
 				cmd.WithWaitExit(),
 			),
+		},
+		{
+			name: "WithBuildCmd",
+			cmd: cmd.New(
+				cmd.WithPreCmd(exec.Command("go", "build", "-o", waitBin, waitPkg+"/main.go")),
+				cmd.WithCommand(waitBin),
+				cmd.WithWaitMatchingLine("Waiting for signal"),
+			),
+		},
+		{
+			name: "DefaultReady",
+			cmd: cmd.New(
+				cmd.WithCommand("go", "version"),
+				cmd.WithStopFn(func(c *exec.Cmd) error { return nil }),
+			),
+		},
+		{
+			name: "CustomStopFn",
+			cmd: cmd.New(
+				cmd.WithCommand(waitBin),
+				cmd.WithWaitMatchingLine("Waiting for signal"),
+				cmd.WithStopFn(cmd.StopWithSignal(syscall.SIGTERM)),
+			),
+		},
+		{
+			name: "WithDir",
+			cmd: cmd.New(
+				cmd.WithCommand("./"+filepath.Base(waitBin)),
+				cmd.WithDir(filepath.Dir(waitBin)),
+				cmd.WithWaitMatchingLine("Waiting for signal"),
+			),
+		},
+		{
+			name: "BadRegexp",
+			cmd: cmd.New(
+				cmd.WithCommand("./"+filepath.Base(waitBin)),
+				cmd.WithWaitMatchingLine(`)_(*&(^*)^_*(&)^&(*%^($%^&*())))`),
+			),
+			err: cmd.ErrBadRegexp,
+		},
+		{
+			name: "StdoutPipeErr",
+			cmd: cmd.New(
+				cmd.WithExecCmd(func() *exec.Cmd {
+					c := exec.Command("go", "version")
+					c.Stdout = bytes.NewBuffer(nil)
+					return c
+				}()),
+				cmd.WithWaitMatchingLine("lol"),
+			),
+			err: cmd.ErrOutputPipe,
+		},
+		{
+			name: "WithGoCode_BuildFailure",
+			cmd: cmd.New(
+				cmd.WithGoCode(waitPkg, "./non/existing/pkg"),
+				cmd.WithWaitMatchingLine("Waiting for signal"),
+			),
+			err: cmd.ErrBuildFailed,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			deptest.ErrorIs(t, tt.cmd, tt.fn, tt.err)
+			deptest.ErrorIs(t, tt.cmd, nil, tt.err)
 		})
 	}
+}
+
+func TestCmd_WithGoCode_Coverage(t *testing.T) {
+	waitPkg := prepareCode(t)
+	coverDir, err := os.MkdirTemp("", "coverdir_")
+	require.NoError(t, err)
+
+	c := cmd.New(
+		cmd.WithGoCode(waitPkg, "./"),
+		cmd.WithWaitMatchingLine("Waiting for signal"),
+		cmd.WithEnvAppend("GOCOVERDIR="+coverDir),
+	)
+	deptest.ErrorIs(t, c, nil, nil)
+
+	files, err := filepath.Glob(coverDir + "/*")
+	require.NoError(t, err)
+
+	// should have covcounters.* and covmeta.* file
+	require.Len(t, files, 2)
 }
 
 func blockForever(*exec.Cmd) error {
 	select {}
 }
 
-func prepareBin(t *testing.T) string {
-	const code = `
+const (
+	code = `
 package main
 
 import (
@@ -152,13 +215,17 @@ func main() {
 	fmt.Println("Got signal:", s)
 }`
 
+	modFile = `module test-code
+
+go 1.23.2
+`
+)
+
+func prepareCode(t *testing.T) string {
 	dir, err := os.MkdirTemp("", "cmd-test-bin_")
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, os.RemoveAll(dir)) })
-
 	require.NoError(t, os.WriteFile(dir+"/main.go", []byte(code), 0o644))
-	buildCmd := exec.Command("go", "build", dir+"/main.go")
-	buildCmd.Dir = dir
-	require.NoError(t, buildCmd.Run())
-	return dir + "/main"
+	require.NoError(t, os.WriteFile(dir+"/go.mod", []byte(modFile), 0o644))
+	return dir
 }
