@@ -22,6 +22,7 @@ type Compose struct {
 	ready    func(tc.ComposeStack) error
 }
 
+// New creates a new compose stack with the given options.
 func New(opts ...Opt) *Compose {
 	return &Compose{
 		opts:  opts,

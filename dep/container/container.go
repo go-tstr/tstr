@@ -21,6 +21,7 @@ type Container struct {
 
 type Opt func(*Container) error
 
+// New creates a new container with the given options.
 func New(opts ...Opt) *Container {
 	return &Container{
 		opts:  opts,

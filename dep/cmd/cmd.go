@@ -36,6 +36,8 @@ type Cmd struct {
 
 type Opt func(*Cmd) error
 
+// New creates a new command with the given options.
+// Default stop signal is os.Interrupt and readiness timeout is 30s.
 func New(opts ...Opt) *Cmd {
 	return &Cmd{
 		opts:         opts,
