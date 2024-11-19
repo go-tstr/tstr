@@ -6,10 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"reflect"
 	"regexp"
-	"runtime"
-	"strings"
 	"time"
 
 	"github.com/go-tstr/tstr/strerr"
@@ -23,6 +20,10 @@ const (
 	ErrOptApply       = strerr.Error("failed apply Opt")
 	ErrNoMatchingLine = strerr.Error("no matching line found")
 	ErrNilCmdRegexp   = strerr.Error("command has to be set before this option can be applied, check the order of options")
+	ErrPreCmdFailed   = strerr.Error("pre command failed")
+	ErrBadRegexp      = strerr.Error("bad regular expression for matching line")
+	ErrOutputPipe     = strerr.Error("failed to aquire output pipe for command")
+	ErrBuildFailed    = strerr.Error("failed to build go binary")
 )
 
 type Cmd struct {
@@ -47,7 +48,7 @@ func New(opts ...Opt) *Cmd {
 func (c *Cmd) Start() error {
 	for _, opt := range c.opts {
 		if err := opt(c); err != nil {
-			return fmt.Errorf("failed to apply option %s: %w", getFnName(opt), err)
+			return fmt.Errorf("failed to apply option: %w", err)
 		}
 	}
 
@@ -92,7 +93,8 @@ func WithCommand(name string, args ...string) Opt {
 	}
 }
 
-// WithReadyFn allows user to provide custom ready function.
+// WithReadyFn allows user to provide custom readiness function.
+// Given fn should block until the command is ready.
 func WithReadyFn(fn func(*exec.Cmd) error) Opt {
 	return func(c *Cmd) error {
 		c.ready = fn
@@ -108,9 +110,18 @@ func WithStopFn(fn func(*exec.Cmd) error) Opt {
 	}
 }
 
-// WithDir sets environment variables for the command.
+// WithEnv sets environment variables for the command.
 // By default, the command inherits the environment of the current process and setting this option will override it.
 func WithEnv(env ...string) Opt {
+	return func(c *Cmd) error {
+		c.cmd.Env = env
+		return nil
+	}
+}
+
+// WithEnvAppend adds environment variables to commands current env.
+// By default, the command inherits the environment of the current process and setting this option will override it.
+func WithEnvAppend(env ...string) Opt {
 	return func(c *Cmd) error {
 		c.cmd.Env = env
 		return nil
@@ -125,32 +136,14 @@ func WithDir(dir string) Opt {
 	}
 }
 
-// WithWaitRegexp sets the ready function so that it waits for the command to output a line that matches the given regular expression.
+// WithWaitMatchingLine sets the ready function so that it waits for the command to output a line that matches the given regular expression.
 func WithWaitMatchingLine(exp string) Opt {
 	return func(c *Cmd) error {
-		re, err := regexp.Compile(exp)
+		fn, err := MatchingLine(exp, c.cmd)
 		if err != nil {
 			return err
 		}
-
-		if c.cmd == nil {
-			return ErrNilCmdRegexp
-		}
-
-		stdout, err := c.cmd.StdoutPipe()
-		if err != nil {
-			return err
-		}
-
-		return WithReadyFn(func(cmd *exec.Cmd) error {
-			scanner := bufio.NewScanner(stdout)
-			for scanner.Scan() {
-				if re.Match(scanner.Bytes()) {
-					return nil
-				}
-			}
-			return errors.Join(ErrNoMatchingLine, scanner.Err())
-		})(c)
+		return WithReadyFn(fn)(c)
 	}
 }
 
@@ -180,6 +173,42 @@ func WithExecCmd(cmd *exec.Cmd) Opt {
 	}
 }
 
+// WithPreCmd runs the given command as part of the setup.
+// This can be used to prepare the actual main command.
+func WithPreCmd(cmd *exec.Cmd) Opt {
+	return func(c *Cmd) error {
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("%w: %w", ErrPreCmdFailed, err)
+		}
+		return nil
+	}
+}
+
+// WithGoCode builds the given Go projects and sets the main package as the command.
+// By default the command is set to collect coverage data.
+func WithGoCode(modulePath, mainPkg string) Opt {
+	return func(c *Cmd) error {
+		dir, err := os.MkdirTemp("", "go-tstr")
+		if err != nil {
+			return fmt.Errorf("failed to create tmp dir for go binary: %w", err)
+		}
+
+		target := dir + "/" + "go-app"
+		buildCmd := exec.Command("go", "build", "-race", "-cover", "-covermode", "atomic", "-o", target, mainPkg)
+		buildCmd.Env = append(os.Environ(), "CGO_ENABLED=1") // Required for -race flag
+		buildCmd.Stdout = os.Stdout
+		buildCmd.Stderr = os.Stderr
+		buildCmd.Dir = modulePath
+		err = buildCmd.Run()
+		if err != nil {
+			return fmt.Errorf("%w: %w", ErrBuildFailed, err)
+		}
+
+		c.cmd = exec.Command(target)
+		return nil
+	}
+}
+
 // StopWithSignal returns a stop function that sends the given signal to the command and waits for it to exit.
 // This can be used with WithStopFn to stop the command with a specific signal.
 func StopWithSignal(s os.Signal) func(*exec.Cmd) error {
@@ -195,7 +224,34 @@ func StopWithSignal(s os.Signal) func(*exec.Cmd) error {
 	}
 }
 
-func getFnName(fn any) string {
-	strs := strings.Split((runtime.FuncForPC(reflect.ValueOf(fn).Pointer()).Name()), ".")
-	return strs[len(strs)-1]
+// MatchLine waits for the command to output a line that matches the given regular expression.
+func MatchingLine(exp string, cmd *exec.Cmd) (func(*exec.Cmd) error, error) {
+	if cmd == nil {
+		return nil, ErrNilCmdRegexp
+	}
+
+	re, err := regexp.Compile(exp)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrBadRegexp, err)
+	}
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrOutputPipe, err)
+	}
+
+	return func(cmd *exec.Cmd) error {
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			if re.Match(scanner.Bytes()) {
+				// drain the rest of the output on background
+				go func() {
+					for scanner.Scan() {
+					}
+				}()
+				return nil
+			}
+		}
+		return errors.Join(ErrNoMatchingLine, scanner.Err())
+	}, nil
 }
