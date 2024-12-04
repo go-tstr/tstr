@@ -1,4 +1,4 @@
-[![Go Reference](https://pkg.go.dev/badge/github.com/go-tstr/tstr.svg)](https://pkg.go.dev/github.com/go-tstr/tstr) [![codecov](https://codecov.io/github/go-tstr/tstr/graph/badge.svg?token=H3u7Ui9PfC)](https://codecov.io/github/go-tstr/tstr) ![main](https://github.com/go-tstr/tstr/actions/workflows/go.yml/badge.svg?branch=main)
+[![Go Reference](https://pkg.go.dev/badge/github.com/go-tstr/tstr.svg)](https://pkg.go.dev/github.com/go-tstr/tstr) [![codecov](https://codecov.io/github/go-tstr/tstr/graph/badge.svg?token=H3u7Ui9PfC)](https://codecov.io/github/go-tstr/tstr) ![main](https://github.com/go-tstr/tstr/actions/workflows/go.yaml/badge.svg?branch=main)
 
 # TSTR: your ultimate testing library!
 
@@ -12,6 +12,20 @@ You can declare the test dependencies like:
 - main package of Go program
 
 and let tstr take care of the rest.
+
+## Table of Contents
+
+- [Usage](#usage)
+  - [tstr.Tester](#tstrtester)
+  - [tstr.RunMain](#tstrrunmain)
+  - [tstr.Run](#tstrrun)
+    - [tstr.WithFn](#tstrwithfn)
+    - [tstr.WithTable](#tstrwithtable)
+  - [tstr.Dependency](#tstrdependency)
+  - [Compose](#compose)
+  - [Container](#container)
+  - [Cmd](#cmd)
+  - [Custom Dependencies](#custom-dependencies)
 
 ## Usage
 
