@@ -1,8 +1,6 @@
 package deptest_test
 
 import (
-	"errors"
-	"fmt"
 	"testing"
 
 	"github.com/go-tstr/tstr/dep/deptest"
@@ -10,13 +8,7 @@ import (
 )
 
 func TestErrorIs_NilErr(t *testing.T) {
-	got := deptest.ErrorIs(t, MockDep{}, func() error { return nil }, nil)
-	assert.True(t, got)
-}
-
-func TestErrorIs_Err(t *testing.T) {
-	err := errors.New("error")
-	got := deptest.ErrorIs(t, MockDep{}, func() error { return fmt.Errorf("wrapped: %w", err) }, err)
+	got := deptest.ErrorIs(t, MockDep{}, func() {}, nil)
 	assert.True(t, got)
 }
 

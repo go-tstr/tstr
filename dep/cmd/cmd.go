@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"regexp"
@@ -102,6 +103,28 @@ func WithReadyFn(fn func(*exec.Cmd) error) Opt {
 	}
 }
 
+// WithReadyHTTP sets the ready function to wait for url to return 200 OK.
+func WithReadyHTTP(url string) Opt {
+	return func(c *Cmd) error {
+		c.ready = func(cmd *exec.Cmd) error {
+			client := &http.Client{
+				Timeout: 10 * time.Second,
+			}
+			for {
+				resp, err := client.Get(url)
+				if err != nil {
+					continue
+				}
+				if resp.StatusCode == http.StatusOK {
+					return nil
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
+		}
+		return nil
+	}
+}
+
 // WithStopFn allows user to provide custom stop function.
 func WithStopFn(fn func(*exec.Cmd) error) Opt {
 	return func(c *Cmd) error {
@@ -186,6 +209,7 @@ func WithPreCmd(cmd *exec.Cmd) Opt {
 
 // WithGoCode builds the given Go projects and sets the main package as the command.
 // By default the command is set to collect coverage data.
+// Working directory for build command is set to modulePath which means that the mainPkg should be relative to it.
 func WithGoCode(modulePath, mainPkg string) Opt {
 	return func(c *Cmd) error {
 		dir, err := os.MkdirTemp("", "go-tstr")

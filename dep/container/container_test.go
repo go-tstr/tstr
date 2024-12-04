@@ -14,7 +14,6 @@ import (
 func TestContainer(t *testing.T) {
 	tests := []struct {
 		name      string
-		fn        func() error
 		container *container.Container
 		err       error
 	}{
@@ -76,7 +75,7 @@ func TestContainer(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			deptest.ErrorIs(t, tt.container, tt.fn, tt.err)
+			deptest.ErrorIs(t, tt.container, nil, tt.err)
 		})
 	}
 }

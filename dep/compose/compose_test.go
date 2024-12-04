@@ -20,7 +20,6 @@ func TestCompose(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		fn      func() error
 		compose *compose.Compose
 		err     error
 	}{
@@ -55,7 +54,7 @@ func TestCompose(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			deptest.ErrorIs(t, tt.compose, tt.fn, tt.err)
+			deptest.ErrorIs(t, tt.compose, nil, tt.err)
 		})
 	}
 }

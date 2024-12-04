@@ -21,8 +21,8 @@ func TestRun_Errors(t *testing.T) {
 		{
 			name: "overwriting test function",
 			opts: []tstr.Opt{
-				tstr.WithFn(func() error { return nil }),
-				tstr.WithFn(func() error { return nil }),
+				tstr.WithFn(func() {}),
+				tstr.WithFn(func() {}),
 			},
 			expectedErr: tstr.ErrOverwritingTestFn,
 		},

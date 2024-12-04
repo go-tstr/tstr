@@ -147,9 +147,12 @@ func WithM(m TestingM) Opt {
 }
 
 // WithFn uses the given function as the test function.
-func WithFn(fn func() error) Opt {
+func WithFn(fn func()) Opt {
 	return func(t *Tester) error {
-		return t.setTest(fn)
+		return t.setTest(func() error {
+			fn()
+			return nil
+		})
 	}
 }
 
