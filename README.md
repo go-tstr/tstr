@@ -42,7 +42,7 @@ There's two common ways to use tester, either from `func TestMain` or from `func
 
 ```go
 func TestMain(m *testing.M) {
-	tstr.RunMain(m, tstr.WithDeps(
+    tstr.RunMain(m, tstr.WithDeps(
     // Pass test dependencies here.
     ))
 }
@@ -61,20 +61,20 @@ Simplest way to use `tstr.Run` is with the `tstr.WithFn` option:
 
 ```go
 func TestMyFunc(t *testing.T) {
-	err := tstr.Run(
-		tstr.WithDeps(
-		// Pass test dependencies here.
-		),
-		tstr.WithFn(func() {
-			const (
-				input    = 1
-				expected = 1
-			)
-			got := MyFunc(input)
-			assert.Equal(t, expected, got)
-		}),
-	)
-	require.NoError(t, err)
+    err := tstr.Run(
+        tstr.WithDeps(
+        // Pass test dependencies here.
+        ),
+        tstr.WithFn(func() {
+            const (
+                input    = 1
+                expected = 1
+            )
+            got := MyFunc(input)
+            assert.Equal(t, expected, got)
+        }),
+    )
+    require.NoError(t, err)
 }
 ```
 
@@ -84,28 +84,28 @@ For table driven tests you can use `tstr.WithTable` which loops over the given t
 
 ```go
 func TestMyFunc(t *testing.T) {
-	type test struct {
-		Name     string
-		input    int
-		expected int
-	}
+    type test struct {
+        Name     string
+        input    int
+        expected int
+    }
 
-	tests := []test{
-		{Name: "test-1", input: 1, expected: 1},
-		{Name: "test-2", input: 2, expected: 2},
-		{Name: "test-3", input: 3, expected: 3},
-	}
+    tests := []test{
+        {Name: "test-1", input: 1, expected: 1},
+        {Name: "test-2", input: 2, expected: 2},
+        {Name: "test-3", input: 3, expected: 3},
+    }
 
-	err := tstr.Run(
-		tstr.WithDeps(
-		// Add dependencies here.
-		),
-		tstr.WithTable(t, tests, func(t *testing.T, tt test) {
-			got := MyFunc(tt.input)
-			assert.Equal(t, tt.expected, got)
-		}),
-	)
-	require.NoError(t, err)
+    err := tstr.Run(
+        tstr.WithDeps(
+        // Add dependencies here.
+        ),
+        tstr.WithTable(t, tests, func(t *testing.T, tt test) {
+            got := MyFunc(tt.input)
+            assert.Equal(t, tt.expected, got)
+        }),
+    )
+    require.NoError(t, err)
 }
 ```
 
@@ -119,15 +119,15 @@ Compose dependecy allows you to define and manage Docker Compose stacks as test 
 
 ```go
 func TestMain(m *testing.M) {
-	tstr.RunMain(m, tstr.WithDeps(
-		compose.New(
-			compose.WithFile("../docker-compose.yaml"),
-			compose.WithUpOptions(tc.Wait(true)),
-			compose.WithDownOptions(tc.RemoveVolumes(true)),
-			compose.WithEnv(map[string]string{"DB_PORT": "5432"}),
-			compose.WithWaitForService("postgres", wait.ForLog("ready to accept connections")),
-		),
-	))
+    tstr.RunMain(m, tstr.WithDeps(
+        compose.New(
+            compose.WithFile("../docker-compose.yaml"),
+            compose.WithUpOptions(tc.Wait(true)),
+            compose.WithDownOptions(tc.RemoveVolumes(true)),
+            compose.WithEnv(map[string]string{"DB_PORT": "5432"}),
+            compose.WithWaitForService("postgres", wait.ForLog("ready to accept connections")),
+        ),
+    ))
 }
 ```
 
@@ -137,15 +137,15 @@ Container dependecy allows you to define and manage single containers as test de
 
 ```go
 func TestMain(m *testing.M) {
-	tstr.RunMain(m, tstr.WithDeps(
-		container.New(
-			container.WithModule(postgres.Run, "postgres:16-alpine",
-				postgres.WithDatabase("test"),
-				postgres.WithUsername("user"),
-				postgres.WithPassword("password"),
-			),
-		),
-	))
+    tstr.RunMain(m, tstr.WithDeps(
+        container.New(
+            container.WithModule(postgres.Run, "postgres:16-alpine",
+                postgres.WithDatabase("test"),
+                postgres.WithUsername("user"),
+                postgres.WithPassword("password"),
+            ),
+        ),
+    ))
 }
 ```
 
@@ -157,13 +157,13 @@ This example compiles `my-app` Go application, instruments it for coverage colle
 
 ```go
 func TestMain(m *testing.M) {
-	tstr.RunMain(m, tstr.WithDeps(
-		cmd.New(
-			cmd.WithGoCode("../", "./cmd/my-app"),
-			cmd.WithReadyHTTP("http://localhost:8080/ready"),
-			cmd.WithEnvAppend("GOCOVERDIR=./cover"),
-		),
-	))
+    tstr.RunMain(m, tstr.WithDeps(
+        cmd.New(
+            cmd.WithGoCode("../", "./cmd/my-app"),
+            cmd.WithReadyHTTP("http://localhost:8080/ready"),
+            cmd.WithEnvAppend("GOCOVERDIR=./cover"),
+        ),
+    ))
 }
 ```
 
@@ -175,7 +175,7 @@ You can also create your own custom dependencies by implementing the `tstr.Depen
 type Custom struct{}
 
 func New() *Custom {
-	return &Custom{}
+    return &Custom{}
 }
 
 func (c *Custom) Start() error { return nil }
