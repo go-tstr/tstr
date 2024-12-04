@@ -44,6 +44,7 @@ func (c *Container) Ready() error {
 func (c *Container) Stop() error {
 	return testcontainers.TerminateContainer(c.c)
 }
+
 func WithReadyFn(fn func(testcontainers.Container) error) Opt {
 	return func(c *Container) error {
 		c.ready = fn
