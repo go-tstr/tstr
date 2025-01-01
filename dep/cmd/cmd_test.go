@@ -2,6 +2,8 @@ package cmd_test
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -172,6 +174,17 @@ func TestCmd(t *testing.T) {
 			deptest.ErrorIs(t, tt.cmd, nil, tt.err)
 		})
 	}
+}
+
+func TestWithReadyHTTP(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	t.Cleanup(srv.Close)
+	c := cmd.New(
+		cmd.WithReadyHTTP(srv.URL),
+		cmd.WithCommand("go", "version"),
+		cmd.WithStopFn(func(c *exec.Cmd) error { return nil }),
+	)
+	deptest.ErrorIs(t, c, nil, nil)
 }
 
 func TestCmd_WithGoCode_Coverage(t *testing.T) {
