@@ -96,6 +96,7 @@ func TestCmd(t *testing.T) {
 				cmd.WithCommand("go", "env", "GOPRIVATE"),
 				cmd.WithEnv("GOPRIVATE=foo"),
 				cmd.WithWaitMatchingLine("foo"),
+				cmd.WithStopFn(func(c *exec.Cmd) error { return nil }),
 			),
 		},
 		{
