@@ -499,8 +499,8 @@ github.com/testcontainers/testcontainers-go v0.35.0 h1:uADsZpTKFAtp8SLK+hMwSaa+X
 github.com/testcontainers/testcontainers-go v0.35.0/go.mod h1:oEVBj5zrfJTrgjwONs1SsRbnBtH9OKl+IGl3UMcr2B4=
 github.com/testcontainers/testcontainers-go/modules/compose v0.34.0 h1:DrpbkHLvPhf4DIatCe6POzIMsT+c/VnbdO2zV+qAVoQ=
 github.com/testcontainers/testcontainers-go/modules/compose v0.34.0/go.mod h1:Fr6tIXogKQlYOPcKieJz0XGfYtcAw2FQLHFiTXXOXmQ=
-github.com/testcontainers/testcontainers-go/modules/minio v0.34.0 h1:OpUqT7VV/d+wriDMHcCZCUfOoFE6wiHnGVzJOXqq8lU=
-github.com/testcontainers/testcontainers-go/modules/minio v0.34.0/go.mod h1:0iaOtVNCzu04KcXHgmdNE7aelKaMUwC9x1M0oe6h1sw=
+github.com/testcontainers/testcontainers-go/modules/minio v0.35.0 h1:oJMrfB0hIABClRsJrVJ43zTEsCVk0JTN7RdTz9r+tk4=
+github.com/testcontainers/testcontainers-go/modules/minio v0.35.0/go.mod h1:Q7gSllC2zi78e2OF6Gwn+DXyqbxdbt6PAuaZdIPh3DQ=
 github.com/testcontainers/testcontainers-go/modules/postgres v0.34.0 h1:c51aBXT3v2HEBVarmaBnsKzvgZjC5amn0qsj8Naqi50=
 github.com/testcontainers/testcontainers-go/modules/postgres v0.34.0/go.mod h1:EWP75ogLQU4M4L8U+20mFipjV4WIR9WtlMXSB6/wiuc=
 github.com/theupdateframework/notary v0.7.0 h1:QyagRZ7wlSpjT5N2qQAh/pN+DVqgekv4DzbAiAiEL3c=
