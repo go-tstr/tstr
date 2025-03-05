@@ -25,6 +25,7 @@ const (
 	ErrBadRegexp      = strerr.Error("bad regular expression for matching line")
 	ErrOutputPipe     = strerr.Error("failed to aquire output pipe for command")
 	ErrBuildFailed    = strerr.Error("failed to build go binary")
+	ErrCreateCoverDir = strerr.Error("failed create coverage dir")
 )
 
 type Cmd struct {
@@ -49,7 +50,7 @@ func New(opts ...Opt) *Cmd {
 func (c *Cmd) Start() error {
 	for _, opt := range c.opts {
 		if err := opt(c); err != nil {
-			return fmt.Errorf("failed to apply option: %w", err)
+			return fmt.Errorf("%w: %w", ErrOptApply, err)
 		}
 	}
 
@@ -133,9 +134,9 @@ func WithStopFn(fn func(*exec.Cmd) error) Opt {
 	}
 }
 
-// WithEnv sets environment variables for the command.
-// By default, the command inherits the environment of the current process and setting this option will override it.
-func WithEnv(env ...string) Opt {
+// WithEnvSet sets environment variables for the command.
+// By default the command inherits the environment of the current process and setting this option will override it.
+func WithEnvSet(env ...string) Opt {
 	return func(c *Cmd) error {
 		c.cmd.Env = env
 		return nil
@@ -143,10 +144,10 @@ func WithEnv(env ...string) Opt {
 }
 
 // WithEnvAppend adds environment variables to commands current env.
-// By default, the command inherits the environment of the current process and setting this option will override it.
+// By default the command inherits the environment of the current process and setting this option will override it.
 func WithEnvAppend(env ...string) Opt {
 	return func(c *Cmd) error {
-		c.cmd.Env = env
+		c.cmd.Env = append(c.cmd.Env, env...)
 		return nil
 	}
 }
@@ -229,6 +230,18 @@ func WithGoCode(modulePath, mainPkg string) Opt {
 		}
 
 		c.cmd = exec.Command(target)
+		c.cmd.Stdout = os.Stdout
+		c.cmd.Stderr = os.Stderr
+		return nil
+	}
+}
+
+func WithGoCoverDir(dir string) Opt {
+	return func(c *Cmd) error {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("%w: %w", ErrCreateCoverDir, err)
+		}
+		c.cmd.Env = append(c.cmd.Env, "GOCOVERDIR="+dir)
 		return nil
 	}
 }
@@ -259,6 +272,7 @@ func MatchingLine(exp string, cmd *exec.Cmd) (func(*exec.Cmd) error, error) {
 		return nil, fmt.Errorf("%w: %w", ErrBadRegexp, err)
 	}
 
+	cmd.Stdout = nil
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrOutputPipe, err)
