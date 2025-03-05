@@ -1,7 +1,6 @@
 package cmd_test
 
 import (
-	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -96,7 +95,16 @@ func TestCmd(t *testing.T) {
 			name: "WithEnv",
 			cmd: cmd.New(
 				cmd.WithCommand("go", "env", "GOPRIVATE"),
-				cmd.WithEnv("GOPRIVATE=foo"),
+				cmd.WithEnvSet("GOPRIVATE=foo"),
+				cmd.WithWaitMatchingLine("foo"),
+				cmd.WithStopFn(func(c *exec.Cmd) error { return nil }),
+			),
+		},
+		{
+			name: "WithEnv",
+			cmd: cmd.New(
+				cmd.WithCommand("go", "env", "GOPRIVATE"),
+				cmd.WithEnvAppend("GOPRIVATE=foo"),
 				cmd.WithWaitMatchingLine("foo"),
 				cmd.WithStopFn(func(c *exec.Cmd) error { return nil }),
 			),
@@ -148,18 +156,6 @@ func TestCmd(t *testing.T) {
 			err: cmd.ErrBadRegexp,
 		},
 		{
-			name: "StdoutPipeErr",
-			cmd: cmd.New(
-				cmd.WithExecCmd(func() *exec.Cmd {
-					c := exec.Command("go", "version")
-					c.Stdout = bytes.NewBuffer(nil)
-					return c
-				}()),
-				cmd.WithWaitMatchingLine("lol"),
-			),
-			err: cmd.ErrOutputPipe,
-		},
-		{
 			name: "WithGoCode_BuildFailure",
 			cmd: cmd.New(
 				cmd.WithGoCode(waitPkg, "./non/existing/pkg"),
@@ -195,7 +191,7 @@ func TestCmd_WithGoCode_Coverage(t *testing.T) {
 	c := cmd.New(
 		cmd.WithGoCode(waitPkg, "./"),
 		cmd.WithWaitMatchingLine("Waiting for signal"),
-		cmd.WithEnvAppend("GOCOVERDIR="+coverDir),
+		cmd.WithGoCoverDir(coverDir),
 	)
 	deptest.ErrorIs(t, c, nil, nil)
 

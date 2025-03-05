@@ -1,6 +1,6 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/go-tstr/tstr.svg)](https://pkg.go.dev/github.com/go-tstr/tstr) [![codecov](https://codecov.io/github/go-tstr/tstr/graph/badge.svg?token=H3u7Ui9PfC)](https://codecov.io/github/go-tstr/tstr) ![main](https://github.com/go-tstr/tstr/actions/workflows/go.yaml/badge.svg?branch=main)
 
-# TSTR: your ultimate testing library!
+# tstr: your ultimate testing library
 
 tstr is testing library allows you to write integration and black-box tests like normal unit tests in Go.
 
@@ -151,7 +151,24 @@ func TestMain(m *testing.M) {
 
 #### Cmd
 
-Cmd dependecy is the most versatile one. It can be used for running any binary or even compiling a Go application and running it as dependency.
+Cmd dependecy is the most versatile dependency. It can be used for running any binary or even compiling a Go application and running it as dependency.
+
+##### cmd.WithCommand
+
+`cmd.WithCommand` allows using binaries from
+
+```go
+func TestMain(m *testing.M) {
+    tstr.RunMain(m, tstr.WithDeps(
+        cmd.New(
+            cmd.WithCommand("my-app", "--listen", ":8080"),
+            cmd.WithWaitMatchingLine("Server ready"),
+        ),
+    ))
+}
+```
+
+##### cmd.WithGoCode
 
 This example compiles `my-app` Go application, instruments it for coverage collections, waits for it to be ready and finally starts running tests.
 
