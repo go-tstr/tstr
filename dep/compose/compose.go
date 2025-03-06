@@ -22,10 +22,15 @@ type Compose struct {
 	ready    func(tc.ComposeStack) error
 }
 
+// New creates new Compose depencency.
+// By default it applies tc.Wait(true) and tc.RemoveOrphans(true) options.
+// Those can be overwritten by WithUpOptions and WithDownOptions.
 func New(opts ...Opt) *Compose {
 	return &Compose{
-		opts:  opts,
-		ready: func(cs tc.ComposeStack) error { return nil },
+		opts:     opts,
+		ready:    func(cs tc.ComposeStack) error { return nil },
+		upOpts:   []tc.StackUpOption{tc.Wait(true)},
+		downOpts: []tc.StackDownOption{tc.RemoveOrphans(true)},
 	}
 }
 
