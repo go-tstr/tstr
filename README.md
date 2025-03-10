@@ -2,9 +2,9 @@
 
 # tstr: your ultimate testing library
 
-tstr is testing library allows you to write integration and black-box tests like normal unit tests in Go.
+tstr allows you to write application, integration and black-box tests like normal unit tests in Go.
 
-You can declare the test dependencies like:
+With tstr you can easily declare the test dependencies like:
 
 - compose files
 - single containers
@@ -201,3 +201,7 @@ func (c *Custom) Ready() error { return nil }
 
 func (c *Custom) Stop() error { return nil }
 ```
+
+## Acknowledgements
+
+This library is based on the work originally done as part of (https://github.com/elisasre/go-common)[https://github.com/elisasre/go-common] and was extracted to it's own repo to be more approachable by users.
