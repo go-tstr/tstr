@@ -238,7 +238,7 @@ func WithGoCode(modulePath, mainPkg string) Opt {
 
 // WithGoCover calls WithGoCoverDir with the os.Getenv("GOCOVERDIR") value if it's set.
 // Otherwise it's a no-op.
-func WithGoCove() Opt {
+func WithGoCover() Opt {
 	dir := os.Getenv("GOCOVERDIR")
 	if dir == "" {
 		return func(c *Cmd) error { return nil }
