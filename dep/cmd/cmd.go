@@ -236,6 +236,19 @@ func WithGoCode(modulePath, mainPkg string) Opt {
 	}
 }
 
+// WithGoCover calls WithGoCoverDir with the os.Getenv("GOCOVERDIR") value if it's set.
+// Otherwise it's a no-op.
+func WithGoCove() Opt {
+	dir := os.Getenv("GOCOVERDIR")
+	if dir == "" {
+		return func(c *Cmd) error { return nil }
+	}
+
+	return WithGoCoverDir(dir)
+}
+
+// WithGoCoverDir creates the dir if it doesn't exist and
+// appends the GOCOVERDIR env variable into the commands env.
 func WithGoCoverDir(dir string) Opt {
 	return func(c *Cmd) error {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
