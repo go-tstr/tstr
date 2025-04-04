@@ -152,6 +152,22 @@ func WithEnvAppend(env ...string) Opt {
 	}
 }
 
+// WithArgsSet sets arguments for the command.
+func WithArgsSet(args ...string) Opt {
+	return func(c *Cmd) error {
+		c.cmd.Args = args
+		return nil
+	}
+}
+
+// WithArgsAppend adds arguments to commands current argument list.
+func WithArgsAppend(args ...string) Opt {
+	return func(c *Cmd) error {
+		c.cmd.Args = append(c.cmd.Args, args...)
+		return nil
+	}
+}
+
 // WithDir sets the working directory for the command.
 func WithDir(dir string) Opt {
 	return func(c *Cmd) error {
