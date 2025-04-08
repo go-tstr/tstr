@@ -82,6 +82,11 @@ func (c *Cmd) Stop() error {
 	return c.wrapErr(ErrStopFailed, c.stop(c.cmd))
 }
 
+// AppendOpt allows adding options after the command has been created.
+func (c *Cmd) AppendOpt(opts ...Opt) {
+	c.opts = append(c.opts, opts...)
+}
+
 func (c *Cmd) wrapErr(wErr, err error) error {
 	if err == nil {
 		return nil
