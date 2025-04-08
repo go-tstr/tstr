@@ -8,9 +8,11 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"sync"
 	"time"
 
 	"github.com/go-tstr/tstr/strerr"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -225,16 +227,20 @@ func WithPreCmd(cmd *exec.Cmd) Opt {
 }
 
 // WithGoCode builds the given Go projects and sets the main package as the command.
-// By default the command is set to collect coverage data.
+// By default the the output binary is instrumented to collect coverage data
 // Working directory for build command is set to modulePath which means that the mainPkg should be relative to it.
+// Building the binary is done in a separate goroutine and the command is started only after the build is finished.
+// Also building is done only once which allows to reuse the reusing the the same Cmd instance without rebuilding the binary.
 func WithGoCode(modulePath, mainPkg string) Opt {
-	return func(c *Cmd) error {
+	var target string
+	eg := &errgroup.Group{}
+	eg.Go(sync.OnceValue(func() error {
 		dir, err := os.MkdirTemp("", "go-tstr")
 		if err != nil {
 			return fmt.Errorf("failed to create tmp dir for go binary: %w", err)
 		}
 
-		target := dir + "/" + "go-app"
+		target = dir + "/" + "go-app"
 		buildCmd := exec.Command("go", "build", "-race", "-cover", "-covermode", "atomic", "-o", target, mainPkg)
 		buildCmd.Env = append(os.Environ(), "CGO_ENABLED=1") // Required for -race flag
 		buildCmd.Stdout = os.Stdout
@@ -243,6 +249,13 @@ func WithGoCode(modulePath, mainPkg string) Opt {
 		err = buildCmd.Run()
 		if err != nil {
 			return fmt.Errorf("%w: %w", ErrBuildFailed, err)
+		}
+		return nil
+	}))
+
+	return func(c *Cmd) error {
+		if err := eg.Wait(); err != nil {
+			return err
 		}
 
 		c.cmd = exec.Command(target)
