@@ -1,6 +1,7 @@
 package cmd_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -84,14 +85,6 @@ func TestCmd(t *testing.T) {
 			err: cmd.ErrNilCmdRegexp,
 		},
 		{
-			name: "WithBuildCmd_error",
-			cmd: cmd.New(
-				cmd.WithPreCmd(exec.Command("go", "build", "non/existing/path/main.go")),
-				cmd.WithCommand("non/existing/path/main"),
-			),
-			err: cmd.ErrPreCmdFailed,
-		},
-		{
 			name: "WithEnv",
 			cmd: cmd.New(
 				cmd.WithCommand("go", "env", "GOPRIVATE"),
@@ -112,16 +105,8 @@ func TestCmd(t *testing.T) {
 		{
 			name: "WithExecCmd",
 			cmd: cmd.New(
-				cmd.WithExecCmd(exec.Command("go", "version")),
+				cmd.WithExecCmd(exec.Command("go", "build", "-o", waitBin, waitPkg+"/main.go")),
 				cmd.WithWaitExit(),
-			),
-		},
-		{
-			name: "WithBuildCmd",
-			cmd: cmd.New(
-				cmd.WithPreCmd(exec.Command("go", "build", "-o", waitBin, waitPkg+"/main.go")),
-				cmd.WithCommand(waitBin),
-				cmd.WithWaitMatchingLine("Waiting for signal"),
 			),
 		},
 		{
@@ -202,7 +187,7 @@ func TestCmd_WithGoCode_Coverage(t *testing.T) {
 	require.Len(t, files, 2)
 }
 
-func blockForever(*exec.Cmd) error {
+func blockForever(context.Context, *exec.Cmd) error {
 	select {}
 }
 

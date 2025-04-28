@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -31,7 +32,7 @@ const (
 
 type Cmd struct {
 	opts         []Opt
-	ready        func(*exec.Cmd) error
+	ready        func(context.Context, *exec.Cmd) error
 	stop         func(*exec.Cmd) error
 	cmd          *exec.Cmd
 	readyTimeout time.Duration
@@ -42,7 +43,7 @@ type Opt func(*Cmd) error
 func New(opts ...Opt) *Cmd {
 	return &Cmd{
 		opts:         opts,
-		ready:        func(*exec.Cmd) error { return nil },
+		ready:        func(context.Context, *exec.Cmd) error { return nil },
 		stop:         StopWithSignal(os.Interrupt),
 		readyTimeout: 30 * time.Second,
 	}
@@ -63,10 +64,13 @@ func (c *Cmd) Start() error {
 }
 
 func (c *Cmd) Ready() error {
+	ctx, cancel := context.WithTimeout(context.Background(), c.readyTimeout)
+	defer cancel()
+
 	errCh := make(chan error, 1)
 	go func() {
 		defer close(errCh)
-		errCh <- c.ready(c.cmd)
+		errCh <- c.ready(ctx, c.cmd)
 	}()
 
 	select {
@@ -92,6 +96,8 @@ func (c *Cmd) wrapErr(wErr, err error) error {
 func WithCommand(name string, args ...string) Opt {
 	return func(c *Cmd) error {
 		c.cmd = exec.Command(name, args...)
+		c.cmd.Stdout = os.Stdout
+		c.cmd.Stderr = os.Stderr
 		return nil
 	}
 }
@@ -111,7 +117,7 @@ func WithCommandFn(fn func() (*exec.Cmd, error)) Opt {
 
 // WithReadyFn allows user to provide custom readiness function.
 // Given fn should block until the command is ready.
-func WithReadyFn(fn func(*exec.Cmd) error) Opt {
+func WithReadyFn(fn func(context.Context, *exec.Cmd) error) Opt {
 	return func(c *Cmd) error {
 		c.ready = fn
 		return nil
@@ -121,19 +127,20 @@ func WithReadyFn(fn func(*exec.Cmd) error) Opt {
 // WithReadyHTTP sets the ready function to wait for url to return 200 OK.
 func WithReadyHTTP(url string) Opt {
 	return func(c *Cmd) error {
-		c.ready = func(cmd *exec.Cmd) error {
+		c.ready = func(ctx context.Context, cmd *exec.Cmd) error {
 			client := &http.Client{
-				Timeout: 10 * time.Second,
+				Timeout: 1 * time.Second,
 			}
 			for {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
 				resp, err := client.Get(url)
-				if err != nil {
+				if err != nil || resp.StatusCode != http.StatusOK {
+					time.Sleep(time.Millisecond * 100)
 					continue
 				}
-				if resp.StatusCode == http.StatusOK {
-					return nil
-				}
-				time.Sleep(100 * time.Millisecond)
+				return nil
 			}
 		}
 		return nil
@@ -213,7 +220,7 @@ func WithReadyTimeout(d time.Duration) Opt {
 // This is useful for commands that exit on their own and don't need to be stopped manually.
 func WithWaitExit() Opt {
 	return func(c *Cmd) error {
-		c.ready = func(cmd *exec.Cmd) error { return cmd.Wait() }
+		c.ready = func(_ context.Context, cmd *exec.Cmd) error { return cmd.Wait() }
 		c.stop = func(*exec.Cmd) error { return nil }
 		return nil
 	}
@@ -223,17 +230,6 @@ func WithWaitExit() Opt {
 func WithExecCmd(cmd *exec.Cmd) Opt {
 	return func(c *Cmd) error {
 		c.cmd = cmd
-		return nil
-	}
-}
-
-// WithPreCmd runs the given command as part of the setup.
-// This can be used to prepare the actual main command.
-func WithPreCmd(cmd *exec.Cmd) Opt {
-	return func(c *Cmd) error {
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("%w: %w", ErrPreCmdFailed, err)
-		}
 		return nil
 	}
 }
@@ -316,7 +312,7 @@ func StopWithSignal(s os.Signal) func(*exec.Cmd) error {
 }
 
 // MatchLine waits for the command to output a line that matches the given regular expression.
-func MatchingLine(exp string, cmd *exec.Cmd) (func(*exec.Cmd) error, error) {
+func MatchingLine(exp string, cmd *exec.Cmd) (func(context.Context, *exec.Cmd) error, error) {
 	if cmd == nil {
 		return nil, ErrNilCmdRegexp
 	}
@@ -332,7 +328,7 @@ func MatchingLine(exp string, cmd *exec.Cmd) (func(*exec.Cmd) error, error) {
 		return nil, fmt.Errorf("%w: %w", ErrOutputPipe, err)
 	}
 
-	return func(cmd *exec.Cmd) error {
+	return func(ctx context.Context, cmd *exec.Cmd) error {
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
 			if re.Match(scanner.Bytes()) {
@@ -342,6 +338,9 @@ func MatchingLine(exp string, cmd *exec.Cmd) (func(*exec.Cmd) error, error) {
 					}
 				}()
 				return nil
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
 			}
 		}
 		return errors.Join(ErrNoMatchingLine, scanner.Err())
