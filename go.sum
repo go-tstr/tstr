@@ -803,8 +803,8 @@ github.com/testcontainers/testcontainers-go v0.37.0 h1:L2Qc0vkTw2EHWQ08djon0D2uw
 github.com/testcontainers/testcontainers-go v0.37.0/go.mod h1:QPzbxZhQ6Bclip9igjLFj6z0hs01bU8lrl2dHQmgFGM=
 github.com/testcontainers/testcontainers-go/modules/compose v0.37.0 h1:AE6XYnyUMkiyuo8GZ3B36d0i4L/HMSjaQ6QtAffkD4k=
 github.com/testcontainers/testcontainers-go/modules/compose v0.37.0/go.mod h1:fgzGeGw5iVyzS6qWOAYDbvv3iWp/wCtqWNSH4Aev8hs=
-github.com/testcontainers/testcontainers-go/modules/minio v0.36.0 h1:NYOqshU552vjkpeNCDev7W3Jmuh2yVEvdko6Q9WX/GM=
-github.com/testcontainers/testcontainers-go/modules/minio v0.36.0/go.mod h1:LAL+x/siLvLHVQ5G/r3X1bLlUhOj9xo8CUEySbNWUz4=
+github.com/testcontainers/testcontainers-go/modules/minio v0.37.0 h1:p2LXViCDHBP0JfVfT9hDxkbTxv+BzAL5ZYOF8sj1q1I=
+github.com/testcontainers/testcontainers-go/modules/minio v0.37.0/go.mod h1:OhJqQ9L2FOnb/otqLbjskhj7utl1Z5RFt2k6mhG9aeI=
 github.com/testcontainers/testcontainers-go/modules/postgres v0.36.0 h1:xTGNNsOD9IIssH0dnAGNUH+SD9GYWyaP2t5xD2lg0as=
 github.com/testcontainers/testcontainers-go/modules/postgres v0.36.0/go.mod h1:WKS3MGq1lzbVibIRnL08TOaf5bKWPxJe5frzyQfV4oY=
 github.com/tetafro/godot v1.5.0 h1:aNwfVI4I3+gdxjMgYPus9eHmoBeJIbnajOyqZYStzuw=
