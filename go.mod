@@ -7,7 +7,7 @@ require (
 	github.com/testcontainers/testcontainers-go v0.37.0
 	github.com/testcontainers/testcontainers-go/modules/compose v0.37.0
 	github.com/testcontainers/testcontainers-go/modules/minio v0.37.0
-	github.com/testcontainers/testcontainers-go/modules/postgres v0.36.0
+	github.com/testcontainers/testcontainers-go/modules/postgres v0.37.0
 	golang.org/x/sync v0.13.0
 )
 
