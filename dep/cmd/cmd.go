@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
-	"sync"
 	"time"
 
 	"github.com/go-tstr/tstr/strerr"
@@ -234,7 +233,7 @@ func WithPreCmd(cmd *exec.Cmd) Opt {
 func WithGoCode(modulePath, mainPkg string) Opt {
 	var target string
 	eg := &errgroup.Group{}
-	eg.Go(sync.OnceValue(func() error {
+	eg.Go(func() error {
 		dir, err := os.MkdirTemp("", "go-tstr")
 		if err != nil {
 			return fmt.Errorf("failed to create tmp dir for go binary: %w", err)
@@ -251,7 +250,7 @@ func WithGoCode(modulePath, mainPkg string) Opt {
 			return fmt.Errorf("%w: %w", ErrBuildFailed, err)
 		}
 		return nil
-	}))
+	})
 
 	return func(c *Cmd) error {
 		if err := eg.Wait(); err != nil {
