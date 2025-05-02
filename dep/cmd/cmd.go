@@ -96,6 +96,19 @@ func WithCommand(name string, args ...string) Opt {
 	}
 }
 
+// WithCommandFn creates a new command using the given function.
+// This is useful for lazy loading of the command and using arguments from other dependencies.
+func WithCommandFn(fn func() (*exec.Cmd, error)) Opt {
+	return func(c *Cmd) error {
+		cmd, err := fn()
+		if err != nil {
+			return err
+		}
+		c.cmd = cmd
+		return nil
+	}
+}
+
 // WithReadyFn allows user to provide custom readiness function.
 // Given fn should block until the command is ready.
 func WithReadyFn(fn func(*exec.Cmd) error) Opt {
