@@ -1,3 +1,4 @@
+// Package container provides a wrapper around the testcontainers-go library to simplify container management in tests.
 package container
 
 import (
@@ -45,6 +46,12 @@ func (c *Container) Stop() error {
 	return testcontainers.TerminateContainer(c.c)
 }
 
+// Container returns the underlying testcontainers.Container.
+func (c *Container) Container() testcontainers.Container {
+	return c.c
+}
+
+// WithReadyFn sets a custom readiness function which should block until ready.
 func WithReadyFn(fn func(testcontainers.Container) error) Opt {
 	return func(c *Container) error {
 		c.ready = fn
@@ -52,6 +59,7 @@ func WithReadyFn(fn func(testcontainers.Container) error) Opt {
 	}
 }
 
+// WithModule creates a container using the testcontainers-go modules.
 func WithModule[T testcontainers.Container](
 	runFn func(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (T, error),
 	img string,
@@ -67,6 +75,7 @@ func WithModule[T testcontainers.Container](
 	}
 }
 
+// WithGenericContainer creates a container using the testcontainers.GenericContainer function.
 func WithGenericContainer(req testcontainers.GenericContainerRequest) Opt {
 	return func(c *Container) (err error) {
 		c.c, err = testcontainers.GenericContainer(context.Background(), req)
