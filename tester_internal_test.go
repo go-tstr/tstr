@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/go-tstr/tstr/dep/depfn"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -34,31 +35,31 @@ func TestRunMain(t *testing.T) {
 		},
 		{
 			name: "start failure",
-			opts: []Opt{WithDeps(&RunnableFn{
-				start: func() error { return errors.New("testing") },
-				ready: func() error { return nil },
-				stop:  func() error { return nil },
-			})},
+			opts: []Opt{WithDeps(depfn.New(
+				func() error { return errors.New("testing") },
+				nil,
+				nil,
+			))},
 			m:            MockTestingM(0),
 			expectedCode: 1,
 		},
 		{
 			name: "ready failure",
-			opts: []Opt{WithDeps(&RunnableFn{
-				start: func() error { return nil },
-				ready: func() error { return errors.New("testing") },
-				stop:  func() error { return nil },
-			})},
+			opts: []Opt{WithDeps(depfn.New(
+				nil,
+				func() error { return errors.New("testing") },
+				nil,
+			))},
 			m:            MockTestingM(0),
 			expectedCode: 1,
 		},
 		{
 			name: "stop failure",
-			opts: []Opt{WithDeps(&RunnableFn{
-				start: func() error { return nil },
-				ready: func() error { return nil },
-				stop:  func() error { return errors.New("testing") },
-			})},
+			opts: []Opt{WithDeps(depfn.New(
+				nil,
+				nil,
+				func() error { return errors.New("testing") },
+			))},
 			m:            MockTestingM(0),
 			expectedCode: 1,
 		},
