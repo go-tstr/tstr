@@ -72,9 +72,3 @@ type Startable interface {
 type Stoppable interface {
 	Stop() error
 }
-
-type RunnableFn struct{ start, ready, stop func() error }
-
-func (r *RunnableFn) Start() error { return r.start() }
-func (r *RunnableFn) Ready() error { return r.ready() }
-func (r *RunnableFn) Stop() error  { return r.stop() }
