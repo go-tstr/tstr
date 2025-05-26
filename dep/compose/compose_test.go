@@ -83,6 +83,6 @@ func prepareFile(t *testing.T) string {
 	t.Cleanup(func() { assert.NoError(t, os.RemoveAll(dir)) })
 
 	file := dir + "/docker-compose.yaml"
-	require.NoError(t, os.WriteFile(file, []byte(composeFile), 0o644))
+	require.NoError(t, os.WriteFile(file, []byte(composeFile), 0o600))
 	return file
 }

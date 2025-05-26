@@ -220,7 +220,7 @@ func prepareCode(t *testing.T) string {
 	dir, err := os.MkdirTemp("", "cmd-test-bin_")
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, os.RemoveAll(dir)) })
-	require.NoError(t, os.WriteFile(dir+"/main.go", []byte(code), 0o644))
-	require.NoError(t, os.WriteFile(dir+"/go.mod", []byte(modFile), 0o644))
+	require.NoError(t, os.WriteFile(dir+"/main.go", []byte(code), 0o600))
+	require.NoError(t, os.WriteFile(dir+"/go.mod", []byte(modFile), 0o600))
 	return dir
 }

@@ -22,7 +22,7 @@ type Compose struct {
 	ready    func(tc.ComposeStack) error
 }
 
-// New creates new Compose depencency.
+// New creates new Compose dependency.
 // By default it applies tc.Wait(true) and tc.RemoveOrphans(true) options.
 // Those can be overwritten by WithUpOptions and WithDownOptions.
 func New(opts ...Opt) *Compose {

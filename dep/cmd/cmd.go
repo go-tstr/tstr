@@ -25,7 +25,7 @@ const (
 	ErrNilCmdRegexp   = strerr.Error("command has to be set before this option can be applied, check the order of options")
 	ErrPreCmdFailed   = strerr.Error("pre command failed")
 	ErrBadRegexp      = strerr.Error("bad regular expression for matching line")
-	ErrOutputPipe     = strerr.Error("failed to aquire output pipe for command")
+	ErrOutputPipe     = strerr.Error("failed to acquire output pipe for command")
 	ErrBuildFailed    = strerr.Error("failed to build go binary")
 	ErrCreateCoverDir = strerr.Error("failed create coverage dir")
 )
@@ -126,6 +126,7 @@ func WithReadyFn(fn func(context.Context, *exec.Cmd) error) Opt {
 
 // WithReadyHTTP sets the ready function to wait for url to return 200 OK.
 func WithReadyHTTP(url string) Opt {
+	const delay = 100 * time.Millisecond
 	return func(c *Cmd) error {
 		c.ready = func(ctx context.Context, cmd *exec.Cmd) error {
 			client := &http.Client{
@@ -136,8 +137,14 @@ func WithReadyHTTP(url string) Opt {
 					return ctx.Err()
 				}
 				resp, err := client.Get(url)
-				if err != nil || resp.StatusCode != http.StatusOK {
-					time.Sleep(time.Millisecond * 100)
+				if err != nil {
+					time.Sleep(delay)
+					continue
+				}
+
+				_ = resp.Body.Close()
+				if resp.StatusCode != http.StatusOK {
+					time.Sleep(delay)
 					continue
 				}
 				return nil
@@ -235,10 +242,10 @@ func WithExecCmd(cmd *exec.Cmd) Opt {
 }
 
 // WithGoCode builds the given Go projects and sets the main package as the command.
-// By default the the output binary is instrumented to collect coverage data
+// By default the output binary is instrumented to collect coverage data
 // Working directory for build command is set to modulePath which means that the mainPkg should be relative to it.
 // Building the binary is done in a separate goroutine and the command is started only after the build is finished.
-// Also building is done only once which allows to reuse the reusing the the same Cmd instance without rebuilding the binary.
+// Also building is done only once which allows to reuse the reusing the same Cmd instance without rebuilding the binary.
 func WithGoCode(modulePath, mainPkg string) Opt {
 	var target string
 	eg := &errgroup.Group{}
@@ -288,7 +295,7 @@ func WithGoCover() Opt {
 // appends the GOCOVERDIR env variable into the commands env.
 func WithGoCoverDir(dir string) Opt {
 	return func(c *Cmd) error {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return fmt.Errorf("%w: %w", ErrCreateCoverDir, err)
 		}
 		c.cmd.Env = append(c.cmd.Env, "GOCOVERDIR="+dir)
