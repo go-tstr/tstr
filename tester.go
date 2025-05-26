@@ -173,7 +173,6 @@ func WithTable[T any](tt TestingT, cases []T, test func(*testing.T, T)) Opt {
 
 		return t.setTest(func() error {
 			for _, tc := range cases {
-				tc := tc
 				name := reflect.ValueOf(&tc).Elem().FieldByName("Name").String()
 				tt.Run(name, func(t *testing.T) {
 					test(t, tc)
