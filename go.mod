@@ -8,7 +8,7 @@ tool (
 )
 
 require (
-	github.com/stretchr/testify v1.11.0
+	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go v0.38.0
 	github.com/testcontainers/testcontainers-go/modules/compose v0.38.0
 	github.com/testcontainers/testcontainers-go/modules/minio v0.38.0
