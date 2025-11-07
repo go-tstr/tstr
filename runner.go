@@ -50,7 +50,8 @@ func (t *Runner) Start() error {
 // Stop stops all started dependencies in the reverse order they were started.
 func (t *Runner) Stop() error {
 	var err error
-	for _, s := range t.stoppables {
+	for i := len(t.stoppables) - 1; i >= 0; i-- {
+		s := t.stoppables[i]
 		err = errors.Join(err, s.Stop())
 	}
 	if err != nil {
