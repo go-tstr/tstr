@@ -73,11 +73,28 @@ func (c *Cmd) Ready() error {
 		errCh <- c.ready(ctx, c.cmd)
 	}()
 
+	failedCh := make(chan error, 1)
+	go func() {
+		for {
+			if c.cmd.ProcessState != nil {
+				close(failedCh)
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Second):
+			}
+		}
+	}()
+
 	select {
 	case <-time.After(c.readyTimeout):
 		return c.wrapErr(ErrReadyFailed, fmt.Errorf("timeout after %s", c.readyTimeout))
 	case err := <-errCh:
 		return c.wrapErr(ErrReadyFailed, err)
+	case <-failedCh:
+		return ErrReadyFailed
 	}
 }
 
