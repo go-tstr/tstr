@@ -1,6 +1,6 @@
 module github.com/go-tstr/tstr
 
-go 1.25.9
+go 1.26.0
 
 tool (
 	github.com/golangci/golangci-lint/v2/cmd/golangci-lint
@@ -13,7 +13,7 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/compose v0.44.0
 	github.com/testcontainers/testcontainers-go/modules/minio v0.44.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
-	golang.org/x/sync v0.22.0
+	golang.org/x/sync v0.23.0
 )
 
 require (
