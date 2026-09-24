@@ -2,14 +2,17 @@ package cmd_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/go-tstr/tstr/dep/cmd"
 	"github.com/go-tstr/tstr/dep/deptest"
@@ -268,6 +271,70 @@ func TestWithEnvSet_ReplacesEnv(t *testing.T) {
 		cmd.WithStopFn(func(c *exec.Cmd) error { return nil }),
 	)
 	deptest.ErrorIs(t, c, nil, nil)
+}
+
+func TestCmd_ExitedEarly(t *testing.T) {
+	c := cmd.New(
+		cmd.WithCommand("sh", "-c", "exit 1"),
+		cmd.WithReadyHTTP("http://127.0.0.1:1/"),
+		cmd.WithReadyTimeout(10*time.Second),
+	)
+	start := time.Now()
+	deptest.ErrorIs(t, c, nil, cmd.ErrExitedEarly)
+	assert.Less(t, time.Since(start), 5*time.Second)
+}
+
+func TestCmd_ExitedEarlyAfterWaitExit(t *testing.T) {
+	c := cmd.New(
+		cmd.WithCommand("sh", "-c", "exit 1"),
+		cmd.WithWaitExit(),
+		cmd.WithReadyHTTP("http://127.0.0.1:1/"),
+		cmd.WithReadyTimeout(10*time.Second),
+	)
+	start := time.Now()
+	deptest.ErrorIs(t, c, nil, cmd.ErrExitedEarly)
+	assert.Less(t, time.Since(start), 5*time.Second)
+}
+
+func TestCmd_ExitZeroBeforeReady(t *testing.T) {
+	c := cmd.New(
+		cmd.WithCommand("sh", "-c", "true"),
+		cmd.WithReadyFn(func(context.Context, *exec.Cmd) error {
+			time.Sleep(200 * time.Millisecond)
+			return nil
+		}),
+	)
+	deptest.ErrorIs(t, c, nil, nil)
+}
+
+func TestCmd_WaitExitErrorReportedOnce(t *testing.T) {
+	c := cmd.New(
+		cmd.WithCommand("go", "foo"),
+		cmd.WithWaitExit(),
+	)
+	require.NoError(t, c.Start())
+	readyErr := c.Ready()
+	stopErr := c.Stop()
+	require.ErrorIs(t, readyErr, cmd.ErrReadyFailed)
+	require.NoError(t, stopErr)
+	assert.Equal(t, 1, strings.Count(errors.Join(readyErr, stopErr).Error(), "exit status"))
+}
+
+func TestCmd_StopAfterReadyTimeout(t *testing.T) {
+	waitPkg := prepareCode(t)
+	waitBin := waitPkg + "/main"
+	out, err := exec.Command("go", "build", "-o", waitBin, waitPkg+"/main.go").CombinedOutput()
+	require.NoError(t, err, string(out))
+
+	c := cmd.New(
+		cmd.WithCommand(waitBin),
+		cmd.WithReadyFn(blockForever),
+		cmd.WithReadyTimeout(100*time.Millisecond),
+	)
+	require.NoError(t, c.Start())
+	t.Cleanup(func() { _ = c.Stop() })
+	require.ErrorIs(t, c.Ready(), cmd.ErrReadyFailed)
+	require.NoError(t, c.Stop())
 }
 
 func TestCmd_WithGoCode_Coverage(t *testing.T) {

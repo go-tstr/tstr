@@ -30,7 +30,10 @@ const (
 	ErrOutputPipe     = strerr.Error("failed to acquire output pipe for command")
 	ErrBuildFailed    = strerr.Error("failed to build go binary")
 	ErrCreateCoverDir = strerr.Error("failed create coverage dir")
+	ErrExitedEarly    = strerr.Error("command exited before becoming ready")
 )
+
+const exitGrace = time.Second
 
 type Cmd struct {
 	opts         []Opt
@@ -41,6 +44,11 @@ type Cmd struct {
 	envIsSet     bool
 	envAppend    []string
 	readyTimeout time.Duration
+	readyOnExit  bool
+	exitReported bool
+	done         chan struct{}
+	waitErr      error
+	cleanup      []func()
 }
 
 type Opt func(*Cmd) error
@@ -55,6 +63,64 @@ func New(opts ...Opt) *Cmd {
 }
 
 func (c *Cmd) Start() error {
+	if err := c.start(); err != nil {
+		c.runCleanup()
+		return err
+	}
+	return nil
+}
+
+func (c *Cmd) Ready() error {
+	if c.done == nil {
+		return fmt.Errorf("%w: command not started", ErrReadyFailed)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), c.readyTimeout)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- c.ready(ctx, c.cmd) }()
+
+	exited := c.done
+	if c.readyOnExit {
+		exited = nil
+	}
+
+	for {
+		select {
+		case err := <-errCh:
+			c.exitReported = c.readyOnExit && err != nil
+			return c.wrapErr(ErrReadyFailed, err)
+		case <-ctx.Done():
+			return c.wrapErr(ErrReadyFailed, fmt.Errorf("timeout after %s: %w", c.readyTimeout, ctx.Err()))
+		case <-exited:
+			if c.waitErr != nil {
+				return c.wrapErr(ErrReadyFailed, c.exitedEarly(ctx, errCh))
+			}
+			// daemonizing wrappers exit 0 right away and the service comes up later
+			exited = nil
+		}
+	}
+}
+
+// Stop tolerates a missing command because the runner stops dependencies whose Start failed.
+func (c *Cmd) Stop() error {
+	if c.cmd == nil {
+		return nil
+	}
+	defer c.runCleanup()
+	err := c.stop(c.cmd)
+	if c.done == nil {
+		return c.wrapErr(ErrStopFailed, err)
+	}
+	waitErr := c.wait()
+	if c.exitReported {
+		waitErr = nil
+	}
+	return c.wrapErr(ErrStopFailed, errors.Join(err, waitErr))
+}
+
+func (c *Cmd) start() error {
 	c.envSet, c.envIsSet, c.envAppend = nil, false, nil
 	for _, opt := range c.opts {
 		if err := opt(c); err != nil {
@@ -76,33 +142,48 @@ func (c *Cmd) Start() error {
 		c.cmd.Env = env
 	}
 
-	return c.wrapErr(ErrStartFailed, c.cmd.Start())
-}
+	if err := c.cmd.Start(); err != nil {
+		return c.wrapErr(ErrStartFailed, err)
+	}
 
-func (c *Cmd) Ready() error {
-	ctx, cancel := context.WithTimeout(context.Background(), c.readyTimeout)
-	defer cancel()
-
-	errCh := make(chan error, 1)
+	cmd, done := c.cmd, make(chan struct{})
+	c.done, c.waitErr, c.exitReported = done, nil, false
 	go func() {
-		defer close(errCh)
-		errCh <- c.ready(ctx, c.cmd)
+		c.waitErr = cmd.Wait()
+		close(done)
 	}()
-
-	select {
-	case <-time.After(c.readyTimeout):
-		return c.wrapErr(ErrReadyFailed, fmt.Errorf("timeout after %s", c.readyTimeout))
-	case err := <-errCh:
-		return c.wrapErr(ErrReadyFailed, err)
-	}
+	return nil
 }
 
-// Stop tolerates a missing command because the runner stops dependencies whose Start failed.
-func (c *Cmd) Stop() error {
-	if c.cmd == nil {
-		return nil
+func (c *Cmd) exitedEarly(ctx context.Context, errCh <-chan error) error {
+	c.exitReported = true
+	if ctx.Err() != nil {
+		return errors.Join(ErrExitedEarly, c.waitErr)
 	}
-	return c.wrapErr(ErrStopFailed, c.stop(c.cmd))
+
+	// the ready fn may still succeed on output the command left behind, so give it a moment
+	var err error
+	select {
+	case err = <-errCh:
+		if err == nil {
+			c.exitReported = false
+			return nil
+		}
+	case <-time.After(min(exitGrace, c.readyTimeout)):
+	}
+	return errors.Join(ErrExitedEarly, c.waitErr, err)
+}
+
+func (c *Cmd) wait() error {
+	<-c.done
+	return c.waitErr
+}
+
+func (c *Cmd) runCleanup() {
+	for _, fn := range c.cleanup {
+		fn()
+	}
+	c.cleanup = nil
 }
 
 func (c *Cmd) wrapErr(wErr, err error) error {
@@ -142,6 +223,7 @@ func WithCommandFn(fn func() (*exec.Cmd, error)) Opt {
 // Given fn should block until the command is ready.
 func WithReadyFn(fn func(context.Context, *exec.Cmd) error) Opt {
 	return func(c *Cmd) error {
+		c.readyOnExit = false
 		c.ready = fn
 		return nil
 	}
@@ -151,26 +233,28 @@ func WithReadyFn(fn func(context.Context, *exec.Cmd) error) Opt {
 func WithReadyHTTP(url string) Opt {
 	const delay = 100 * time.Millisecond
 	return func(c *Cmd) error {
+		c.readyOnExit = false
 		c.ready = func(ctx context.Context, cmd *exec.Cmd) error {
 			client := &http.Client{
 				Timeout: 1 * time.Second,
 			}
 			for {
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
-				resp, err := client.Get(url)
+				req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 				if err != nil {
-					time.Sleep(delay)
-					continue
+					return err
 				}
-
-				_ = resp.Body.Close()
-				if resp.StatusCode != http.StatusOK {
-					time.Sleep(delay)
-					continue
+				resp, err := client.Do(req)
+				if err == nil {
+					_ = resp.Body.Close()
+					if resp.StatusCode == http.StatusOK {
+						return nil
+					}
 				}
-				return nil
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(delay):
+				}
 			}
 		}
 		return nil
@@ -179,6 +263,7 @@ func WithReadyHTTP(url string) Opt {
 
 // WithStopFn allows user to provide custom stop function.
 // The fn may receive a command that never started (Process == nil) and must tolerate it.
+// The function must only signal or kill the command and must not call Wait, Cmd already waits on the process and a concurrent Wait is a data race.
 func WithStopFn(fn func(*exec.Cmd) error) Opt {
 	return func(c *Cmd) error {
 		c.stop = fn
@@ -232,10 +317,11 @@ func WithDir(dir string) Opt {
 // WithWaitMatchingLine sets the ready function so that it waits for the command to output a line that matches the given regular expression.
 func WithWaitMatchingLine(exp string) Opt {
 	return withCmd(func(c *Cmd) error {
-		fn, err := MatchingLine(exp, c.cmd)
+		fn, closePipe, err := matchingLine(exp, c.cmd)
 		if err != nil {
 			return err
 		}
+		c.cleanup = append(c.cleanup, closePipe)
 		return WithReadyFn(fn)(c)
 	})
 }
@@ -248,12 +334,12 @@ func WithReadyTimeout(d time.Duration) Opt {
 	}
 }
 
-// WithWaitExit sets the ready and stop functions so that ready waits for the command to exit successfully and stop returns nil immediately.
+// WithWaitExit sets the ready function so that it waits for the command to exit successfully.
 // This is useful for commands that exit on their own and don't need to be stopped manually.
 func WithWaitExit() Opt {
 	return func(c *Cmd) error {
-		c.ready = func(_ context.Context, cmd *exec.Cmd) error { return cmd.Wait() }
-		c.stop = func(*exec.Cmd) error { return nil }
+		c.readyOnExit = true
+		c.ready = func(context.Context, *exec.Cmd) error { return c.wait() }
 		return nil
 	}
 }
@@ -336,46 +422,59 @@ func withCmd(fn func(*Cmd) error) Opt {
 	}
 }
 
-// StopWithSignal returns a stop function that sends the given signal to the command and waits for it to exit.
-// This can be used with WithStopFn to stop the command with a specific signal.
+// StopWithSignal returns a stop function that sends the given signal to the command if it is still running.
+// It does not call Wait because Cmd already waits on the process and a concurrent Wait is a data race.
 func StopWithSignal(s os.Signal) func(*exec.Cmd) error {
 	return func(c *exec.Cmd) error {
 		if c == nil || c.Process == nil {
 			return nil
 		}
-		var err error
-		if c.ProcessState == nil {
-			err = c.Process.Signal(s)
+		err := c.Process.Signal(s)
+		if errors.Is(err, os.ErrProcessDone) {
+			return nil
 		}
-		return errors.Join(err, c.Wait())
+		return err
 	}
 }
 
 // MatchLine waits for the command to output a line that matches the given regular expression.
 func MatchingLine(exp string, cmd *exec.Cmd) (func(context.Context, *exec.Cmd) error, error) {
+	fn, _, err := matchingLine(exp, cmd)
+	return fn, err
+}
+
+func matchingLine(exp string, cmd *exec.Cmd) (func(context.Context, *exec.Cmd) error, func(), error) {
 	if cmd == nil {
-		return nil, ErrNilCmd
+		return nil, nil, ErrNilCmd
 	}
 
 	re, err := regexp.Compile(exp)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrBadRegexp, err)
+		return nil, nil, fmt.Errorf("%w: %w", ErrBadRegexp, err)
 	}
 
-	cmd.Stdout = nil
-	stdout, err := cmd.StdoutPipe()
+	// StdoutPipe is closed by Wait, which runs in the background, so use a pipe that outlives it
+	r, w, err := os.Pipe()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrOutputPipe, err)
+		return nil, nil, fmt.Errorf("%w: %w", ErrOutputPipe, err)
+	}
+	cmd.Stdout = w
+	closePipe := func() {
+		_ = w.Close()
+		_ = r.Close()
 	}
 
-	return func(ctx context.Context, cmd *exec.Cmd) error {
-		scanner := bufio.NewScanner(stdout)
+	return func(ctx context.Context, _ *exec.Cmd) error {
+		// the child has its own copy of the write end after Start
+		_ = w.Close()
+		scanner := bufio.NewScanner(r)
 		for scanner.Scan() {
 			if re.Match(scanner.Bytes()) {
 				// drain the rest of the output on background
 				go func() {
 					for scanner.Scan() {
 					}
+					_ = r.Close()
 				}()
 				return nil
 			}
@@ -383,6 +482,7 @@ func MatchingLine(exp string, cmd *exec.Cmd) (func(context.Context, *exec.Cmd) e
 				return ctx.Err()
 			}
 		}
+		_ = r.Close()
 		return errors.Join(ErrNoMatchingLine, scanner.Err())
-	}, nil
+	}, closePipe, nil
 }
