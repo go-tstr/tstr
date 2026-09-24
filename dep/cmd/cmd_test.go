@@ -1,6 +1,7 @@
 package cmd_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -21,7 +22,7 @@ import (
 )
 
 func TestCmd(t *testing.T) {
-	waitPkg := prepareCode(t)
+	waitPkg := writeProgram(t, code)
 	waitBin := waitPkg + "/main"
 
 	tests := []struct {
@@ -321,10 +322,7 @@ func TestCmd_WaitExitErrorReportedOnce(t *testing.T) {
 }
 
 func TestCmd_StopAfterReadyTimeout(t *testing.T) {
-	waitPkg := prepareCode(t)
-	waitBin := waitPkg + "/main"
-	out, err := exec.Command("go", "build", "-o", waitBin, waitPkg+"/main.go").CombinedOutput()
-	require.NoError(t, err, string(out))
+	waitBin := buildProgram(t, writeProgram(t, code))
 
 	c := cmd.New(
 		cmd.WithCommand(waitBin),
@@ -338,7 +336,7 @@ func TestCmd_StopAfterReadyTimeout(t *testing.T) {
 }
 
 func TestCmd_WithGoCode_Coverage(t *testing.T) {
-	waitPkg := prepareCode(t)
+	waitPkg := writeProgram(t, code)
 	coverDir, err := os.MkdirTemp("", "coverdir_")
 	require.NoError(t, err)
 
@@ -356,8 +354,95 @@ func TestCmd_WithGoCode_Coverage(t *testing.T) {
 	require.Len(t, files, 2)
 }
 
+func TestStopTimeout(t *testing.T) {
+	ignoreBin := buildProgram(t, writeProgram(t, ignoreCode))
+
+	c := cmd.New(
+		cmd.WithCommand(ignoreBin),
+		cmd.WithWaitMatchingLine("Ignoring signals"),
+		cmd.WithStopTimeout(500*time.Millisecond),
+	)
+	require.NoError(t, c.Start())
+	require.NoError(t, c.Ready())
+
+	start := time.Now()
+	err := c.Stop()
+	require.ErrorIs(t, err, cmd.ErrStopFailed)
+	require.ErrorIs(t, err, cmd.ErrStopTimeout)
+	assert.Less(t, time.Since(start), 5*time.Second)
+}
+
+func TestStopAlreadyExited(t *testing.T) {
+	c := cmd.New(
+		cmd.WithCommand("sh", "-c", "exit 3"),
+		cmd.WithReadyFn(waitExited),
+	)
+	require.NoError(t, c.Start())
+	require.NoError(t, c.Ready())
+
+	err := c.Stop()
+	require.ErrorIs(t, err, cmd.ErrStopFailed)
+	assert.Contains(t, err.Error(), "exit status 3")
+	assert.NotContains(t, err.Error(), "process already finished")
+}
+
+func TestStopDaemonizer(t *testing.T) {
+	ec := exec.Command("sh", "-c", "sleep 2 & echo ready")
+	ec.Stdout = &bytes.Buffer{}
+
+	c := cmd.New(
+		cmd.WithExecCmd(ec),
+		cmd.WithReadyFn(waitExited),
+		cmd.WithStopTimeout(500*time.Millisecond),
+	)
+	require.NoError(t, c.Start())
+	require.NoError(t, c.Ready())
+	require.NoError(t, c.Stop())
+}
+
+func TestStopGrandchildHoldsPipe(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "ready")
+	ec := exec.Command("sh", "-c", `trap '' INT TERM; sleep 3 & touch "$MARKER"; sleep 3`)
+	ec.Env = append(os.Environ(), "MARKER="+marker)
+	ec.Stdout = &bytes.Buffer{}
+
+	c := cmd.New(
+		cmd.WithExecCmd(ec),
+		cmd.WithReadyFn(func(ctx context.Context, _ *exec.Cmd) error {
+			for {
+				if _, err := os.Stat(marker); err == nil {
+					return nil
+				}
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+		}),
+		cmd.WithStopTimeout(300*time.Millisecond),
+	)
+	require.NoError(t, c.Start())
+	require.NoError(t, c.Ready())
+
+	start := time.Now()
+	err := c.Stop()
+	require.ErrorIs(t, err, cmd.ErrStopTimeout)
+	assert.Less(t, time.Since(start), 5*time.Second)
+}
+
 func blockForever(context.Context, *exec.Cmd) error {
 	select {}
+}
+
+// Signal fails with ErrProcessDone only once the background Wait has reaped the process
+func waitExited(ctx context.Context, c *exec.Cmd) error {
+	for !errors.Is(c.Process.Signal(syscall.Signal(0)), os.ErrProcessDone) {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return nil
 }
 
 const (
@@ -379,17 +464,46 @@ func main() {
 	fmt.Println("Got signal:", s)
 }`
 
+	ignoreCode = `
+package main
+
+import (
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+)
+
+func main() {
+	signal.Ignore(os.Interrupt, syscall.SIGTERM)
+	fmt.Println("Ignoring signals")
+	for {
+		time.Sleep(time.Hour)
+	}
+}`
+
 	modFile = `module test-code
 
 go 1.23.2
 `
 )
 
-func prepareCode(t *testing.T) string {
+func writeProgram(t *testing.T, src string) string {
 	dir, err := os.MkdirTemp("", "cmd-test-bin_")
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, os.RemoveAll(dir)) })
-	require.NoError(t, os.WriteFile(dir+"/main.go", []byte(code), 0o600))
+	require.NoError(t, os.WriteFile(dir+"/main.go", []byte(src), 0o600))
 	require.NoError(t, os.WriteFile(dir+"/go.mod", []byte(modFile), 0o600))
 	return dir
+}
+
+func buildProgram(t *testing.T, dir string) string {
+	bin := dir + "/main"
+	build := exec.Command("go", "build", "-o", bin, dir+"/main.go")
+	build.Dir = dir
+	build.Stdout = os.Stdout
+	build.Stderr = os.Stderr
+	require.NoError(t, build.Run())
+	return bin
 }

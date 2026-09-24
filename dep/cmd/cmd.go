@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"syscall"
 	"time"
 
 	"github.com/go-tstr/tstr/strerr"
@@ -31,7 +32,11 @@ const (
 	ErrBuildFailed    = strerr.Error("failed to build go binary")
 	ErrCreateCoverDir = strerr.Error("failed create coverage dir")
 	ErrExitedEarly    = strerr.Error("command exited before becoming ready")
+	ErrStopTimeout    = strerr.Error("command did not exit within stop timeout")
 )
+
+// DefaultStopTimeout is how long Stop waits for the command to exit after the stop function before killing it.
+const DefaultStopTimeout = 10 * time.Second
 
 const exitGrace = time.Second
 
@@ -44,6 +49,8 @@ type Cmd struct {
 	envIsSet     bool
 	envAppend    []string
 	readyTimeout time.Duration
+	stopTimeout  time.Duration
+	ownWaitDelay bool
 	readyOnExit  bool
 	exitReported bool
 	done         chan struct{}
@@ -59,6 +66,7 @@ func New(opts ...Opt) *Cmd {
 		ready:        func(context.Context, *exec.Cmd) error { return nil },
 		stop:         StopWithSignal(os.Interrupt),
 		readyTimeout: 30 * time.Second,
+		stopTimeout:  DefaultStopTimeout,
 	}
 }
 
@@ -104,6 +112,7 @@ func (c *Cmd) Ready() error {
 }
 
 // Stop tolerates a missing command because the runner stops dependencies whose Start failed.
+// Stop calls the stop function and waits for the command to exit, killing it if it is still running after the stop timeout.
 func (c *Cmd) Stop() error {
 	if c.cmd == nil {
 		return nil
@@ -113,11 +122,40 @@ func (c *Cmd) Stop() error {
 	if c.done == nil {
 		return c.wrapErr(ErrStopFailed, err)
 	}
+
+	// a nil channel never fires, so a zero timeout waits forever
+	var timeout <-chan time.Time
+	if c.stopTimeout > 0 {
+		timeout = time.After(c.stopTimeout)
+	}
+
+	select {
+	case <-c.done:
+	case <-timeout:
+		err = errors.Join(err, c.kill())
+	}
+
 	waitErr := c.wait()
 	if c.exitReported {
 		waitErr = nil
 	}
 	return c.wrapErr(ErrStopFailed, errors.Join(err, waitErr))
+}
+
+// kill is a no-op when the command already exited, done only closes once Wait has also drained the pipes
+func (c *Cmd) kill() error {
+	if errors.Is(c.cmd.Process.Signal(syscall.Signal(0)), os.ErrProcessDone) {
+		return nil
+	}
+	killErr := StopWithSignal(os.Kill)(c.cmd)
+	<-c.done
+	// the command may have honoured the stop signal just before the kill landed
+	if ps := c.cmd.ProcessState; ps != nil {
+		if ws, ok := ps.Sys().(syscall.WaitStatus); ok && ws.Signaled() && ws.Signal() != syscall.SIGKILL {
+			return killErr
+		}
+	}
+	return errors.Join(ErrStopTimeout, killErr)
 }
 
 func (c *Cmd) start() error {
@@ -142,6 +180,12 @@ func (c *Cmd) start() error {
 		c.cmd.Env = env
 	}
 
+	// Wait blocks on pipe EOF when output is not an *os.File, and grandchildren of a killed command keep the pipe open
+	c.ownWaitDelay = c.cmd.WaitDelay == 0 && c.stopTimeout > 0
+	if c.ownWaitDelay {
+		c.cmd.WaitDelay = c.stopTimeout
+	}
+
 	if err := c.cmd.Start(); err != nil {
 		return c.wrapErr(ErrStartFailed, err)
 	}
@@ -149,10 +193,19 @@ func (c *Cmd) start() error {
 	cmd, done := c.cmd, make(chan struct{})
 	c.done, c.waitErr, c.exitReported = done, nil, false
 	go func() {
-		c.waitErr = cmd.Wait()
+		c.waitErr = c.waitExit(cmd)
 		close(done)
 	}()
 	return nil
+}
+
+// pipes left open by grandchildren are not a failure of the command itself
+func (c *Cmd) waitExit(cmd *exec.Cmd) error {
+	err := cmd.Wait()
+	if c.ownWaitDelay && errors.Is(err, exec.ErrWaitDelay) {
+		return nil
+	}
+	return err
 }
 
 func (c *Cmd) exitedEarly(ctx context.Context, errCh <-chan error) error {
@@ -264,9 +317,19 @@ func WithReadyHTTP(url string) Opt {
 // WithStopFn allows user to provide custom stop function.
 // The fn may receive a command that never started (Process == nil) and must tolerate it.
 // The function must only signal or kill the command and must not call Wait, Cmd already waits on the process and a concurrent Wait is a data race.
+// Cmd kills the command if it is still running after the stop timeout, see WithStopTimeout.
 func WithStopFn(fn func(*exec.Cmd) error) Opt {
 	return func(c *Cmd) error {
 		c.stop = fn
+		return nil
+	}
+}
+
+// WithStopTimeout overrides DefaultStopTimeout for both the exit wait and the output pipe drain, zero waits forever.
+// Only the direct child is killed, grandchildren are left running.
+func WithStopTimeout(d time.Duration) Opt {
+	return func(c *Cmd) error {
+		c.stopTimeout = d
 		return nil
 	}
 }
