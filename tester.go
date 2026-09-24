@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"sync"
 	"testing"
 
 	"github.com/go-tstr/tstr/strerr"
@@ -40,11 +41,7 @@ var exit = os.Exit
 //   - WithFn
 //   - WithTable
 func Run(opts ...Opt) error {
-	t := NewTester(opts...)
-	if err := t.Init(); err != nil {
-		return err
-	}
-	return t.Run()
+	return NewTester(opts...).Run()
 }
 
 // RunMain is a convinience wrapper around Run that can be used inside TestMain.
@@ -72,10 +69,14 @@ func RunMain(m TestingM, opts ...Opt) {
 	exit(exitCode)
 }
 
+// Tester must not be copied after creation.
+// Run is safe for repeated sequential use, not for concurrent use.
 type Tester struct {
-	opts []Opt
-	deps []Dependency
-	test func() error
+	opts     []Opt
+	deps     []Dependency
+	test     func() error
+	initOnce sync.Once
+	initErr  error
 }
 
 // NewTester creates a new Tester with the given options.
@@ -89,20 +90,30 @@ func NewTester(opts ...Opt) *Tester {
 }
 
 // Init applies all options to the Tester.
+// Options are applied only once, every later call returns the same result as the first one.
+// Run calls Init itself, so calling Init explicitly is optional.
 func (t *Tester) Init() error {
-	for _, opt := range t.opts {
-		if err := opt(t); err != nil {
-			return fmt.Errorf("failed to apply option: %w", err)
+	t.initOnce.Do(func() {
+		for _, opt := range t.opts {
+			if err := opt(t); err != nil {
+				t.initErr = fmt.Errorf("failed to apply option: %w", err)
+				return
+			}
 		}
-	}
-	if t.test == nil {
+	})
+	// Checked outside Do so a recovered panic in an option still leaves Run safe.
+	if t.initErr == nil && t.test == nil {
 		return ErrMissingTestFn
 	}
-	return nil
+	return t.initErr
 }
 
-// Run starts the test dependencies, executes the test function and finally stops the dependencies.
+// Run initializes the Tester, starts the test dependencies, executes the test function and finally stops the dependencies.
 func (t *Tester) Run() error {
+	if err := t.Init(); err != nil {
+		return err
+	}
+
 	r := NewRunner(t.deps...)
 	if err := r.Start(); err != nil {
 		return errors.Join(err, r.Stop())
