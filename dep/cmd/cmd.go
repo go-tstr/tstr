@@ -2,13 +2,17 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"regexp"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -55,7 +59,7 @@ type Cmd struct {
 	exitReported bool
 	done         chan struct{}
 	waitErr      error
-	cleanup      []func()
+	cleanup      []func() error
 }
 
 type Opt func(*Cmd) error
@@ -72,8 +76,7 @@ func New(opts ...Opt) *Cmd {
 
 func (c *Cmd) Start() error {
 	if err := c.start(); err != nil {
-		c.runCleanup()
-		return err
+		return errors.Join(err, c.runCleanup())
 	}
 	return nil
 }
@@ -117,10 +120,14 @@ func (c *Cmd) Stop() error {
 	if c.cmd == nil {
 		return nil
 	}
-	defer c.runCleanup()
+	err := c.stopAndWait()
+	return c.wrapErr(ErrStopFailed, errors.Join(err, c.runCleanup()))
+}
+
+func (c *Cmd) stopAndWait() error {
 	err := c.stop(c.cmd)
 	if c.done == nil {
-		return c.wrapErr(ErrStopFailed, err)
+		return err
 	}
 
 	// a nil channel never fires, so a zero timeout waits forever
@@ -139,7 +146,7 @@ func (c *Cmd) Stop() error {
 	if c.exitReported {
 		waitErr = nil
 	}
-	return c.wrapErr(ErrStopFailed, errors.Join(err, waitErr))
+	return errors.Join(err, waitErr)
 }
 
 // kill is a no-op when the command already exited, done only closes once Wait has also drained the pipes
@@ -232,11 +239,13 @@ func (c *Cmd) wait() error {
 	return c.waitErr
 }
 
-func (c *Cmd) runCleanup() {
+func (c *Cmd) runCleanup() error {
+	var err error
 	for _, fn := range c.cleanup {
-		fn()
+		err = errors.Join(err, fn())
 	}
 	c.cleanup = nil
+	return err
 }
 
 func (c *Cmd) wrapErr(wErr, err error) error {
@@ -380,12 +389,12 @@ func WithDir(dir string) Opt {
 // WithWaitMatchingLine sets the ready function so that it waits for the command to output a line that matches the given regular expression.
 func WithWaitMatchingLine(exp string) Opt {
 	return withCmd(func(c *Cmd) error {
-		fn, closePipe, err := matchingLine(exp, c.cmd)
+		m, err := matchingLine(exp, c.cmd)
 		if err != nil {
 			return err
 		}
-		c.cleanup = append(c.cleanup, closePipe)
-		return WithReadyFn(fn)(c)
+		c.cleanup = append(c.cleanup, func() error { return m.cleanup(c.stopTimeout) })
+		return WithReadyFn(m.ready)(c)
 	})
 }
 
@@ -500,52 +509,249 @@ func StopWithSignal(s os.Signal) func(*exec.Cmd) error {
 	}
 }
 
-// MatchLine waits for the command to output a line that matches the given regular expression.
+// MatchingLine returns a ready function that waits for the command to output a line matching the given regular expression.
+// Both stdout and stderr are scanned and passed through to the writers already set on the command.
+// The pipes and drain goroutines are released once the ready function has been called after Start and the process
+// and its descendants have closed their output. Use WithWaitMatchingLine inside cmd.New for deterministic cleanup on Stop.
 func MatchingLine(exp string, cmd *exec.Cmd) (func(context.Context, *exec.Cmd) error, error) {
-	fn, _, err := matchingLine(exp, cmd)
-	return fn, err
+	m, err := matchingLine(exp, cmd)
+	if err != nil {
+		return nil, err
+	}
+	return m.ready, nil
 }
 
-func matchingLine(exp string, cmd *exec.Cmd) (func(context.Context, *exec.Cmd) error, func(), error) {
+func matchingLine(exp string, cmd *exec.Cmd) (*lineMatcher, error) {
 	if cmd == nil {
-		return nil, nil, ErrNilCmd
+		return nil, ErrNilCmd
 	}
 
 	re, err := regexp.Compile(exp)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %w", ErrBadRegexp, err)
+		return nil, fmt.Errorf("%w: %w", ErrBadRegexp, err)
 	}
 
-	// StdoutPipe is closed by Wait, which runs in the background, so use a pipe that outlives it
+	m := &lineMatcher{re: re, matched: make(chan struct{}), eof: make(chan struct{})}
+	if err := m.attach(cmd); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+type lineMatcher struct {
+	re        *regexp.Regexp
+	matchOnce sync.Once
+	matched   chan struct{}
+	pipes     []*matchPipe
+	writeOnce sync.Once
+	open      atomic.Int32
+	eof       chan struct{}
+	mu        sync.Mutex
+	err       error
+}
+
+func (m *lineMatcher) attach(cmd *exec.Cmd) error {
+	stdout, err := m.pipe(cmd.Stdout)
+	if err != nil {
+		return err
+	}
+	stderr := stdout
+	// A shared pipe keeps both streams in the order the user asked for when they already point at the same writer.
+	if !interfaceEqual(cmd.Stdout, cmd.Stderr) {
+		if stderr, err = m.pipe(cmd.Stderr); err != nil {
+			stdout.close()
+			return err
+		}
+	}
+	cmd.Stdout, cmd.Stderr = stdout.w, stderr.w
+
+	m.open.Store(int32(len(m.pipes)))
+	for _, p := range m.pipes {
+		go p.drain()
+	}
+	return nil
+}
+
+func (m *lineMatcher) ready(ctx context.Context, _ *exec.Cmd) error {
+	m.closeWriters()
+	select {
+	case <-m.matched:
+		return nil
+	case <-m.eof:
+		if m.isMatched() {
+			return nil
+		}
+		return errors.Join(ErrNoMatchingLine, m.readErr())
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// Closing a read end drops whatever the kernel still buffers, so the drains are woken to flush it first.
+func (m *lineMatcher) cleanup(timeout time.Duration) error {
+	m.closeWriters()
+	for _, p := range m.pipes {
+		if err := p.r.SetReadDeadline(time.Now()); err != nil {
+			_ = p.r.Close()
+		}
+	}
+
+	// a nil channel never fires, so a zero timeout waits forever
+	var expired <-chan time.Time
+	if timeout > 0 {
+		expired = time.After(timeout)
+	}
+	select {
+	case <-m.eof:
+		return m.readErr()
+	case <-expired:
+		for _, p := range m.pipes {
+			_ = p.r.Close()
+		}
+		return errors.Join(m.readErr(), fmt.Errorf("output not drained within %s", timeout))
+	}
+}
+
+// The child has its own copies of the write ends after Start, ours would keep EOF from ever arriving.
+func (m *lineMatcher) closeWriters() {
+	m.writeOnce.Do(func() {
+		for _, p := range m.pipes {
+			_ = p.w.Close()
+		}
+	})
+}
+
+func (m *lineMatcher) pipe(dst io.Writer) (*matchPipe, error) {
 	r, w, err := os.Pipe()
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %w", ErrOutputPipe, err)
+		return nil, fmt.Errorf("%w: %w", ErrOutputPipe, err)
 	}
-	cmd.Stdout = w
-	closePipe := func() {
-		_ = w.Close()
-		_ = r.Close()
-	}
+	p := &matchPipe{m: m, r: r, w: w, dst: dst}
+	m.pipes = append(m.pipes, p)
+	return p, nil
+}
 
-	return func(ctx context.Context, _ *exec.Cmd) error {
-		// the child has its own copy of the write end after Start
-		_ = w.Close()
-		scanner := bufio.NewScanner(r)
-		for scanner.Scan() {
-			if re.Match(scanner.Bytes()) {
-				// drain the rest of the output on background
-				go func() {
-					for scanner.Scan() {
-					}
-					_ = r.Close()
-				}()
-				return nil
-			}
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
+func (m *lineMatcher) match(line []byte) {
+	if m.isMatched() {
+		return
+	}
+	line = bytes.TrimSuffix(bytes.TrimSuffix(line, []byte("\n")), []byte("\r"))
+	if m.re.Match(line) {
+		m.matchOnce.Do(func() { close(m.matched) })
+	}
+}
+
+func (m *lineMatcher) isMatched() bool {
+	select {
+	case <-m.matched:
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *lineMatcher) fail(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err == nil {
+		m.err = err
+	}
+}
+
+func (m *lineMatcher) readErr() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.err
+}
+
+func (m *lineMatcher) drained(err error) {
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, os.ErrClosed) {
+		m.fail(err)
+	}
+	if m.open.Add(-1) == 0 {
+		close(m.eof)
+	}
+}
+
+// matchPipe is handed to the child as a plain file, so Wait returns when the child exits even if grandchildren keep writing.
+type matchPipe struct {
+	m    *lineMatcher
+	r, w *os.File
+	dst  io.Writer
+}
+
+func (p *matchPipe) close() {
+	_ = p.w.Close()
+	_ = p.r.Close()
+}
+
+func (p *matchPipe) drain() {
+	br := bufio.NewReaderSize(p.r, 64*1024)
+	skipping := false
+	var err error
+	for err == nil {
+		var chunk []byte
+		chunk, err = br.ReadSlice('\n')
+		// Matching happens before the tee so a blocked destination writer cannot stall readiness.
+		switch {
+		case errors.Is(err, bufio.ErrBufferFull):
+			// Oversized lines are skipped entirely, matching a chunk could turn its boundary into a false anchored match.
+			skipping, err = true, nil
+		case skipping:
+			skipping = false
+		case len(chunk) > 0:
+			p.m.match(chunk)
 		}
-		_ = r.Close()
-		return errors.Join(ErrNoMatchingLine, scanner.Err())
-	}, closePipe, nil
+		p.tee(chunk)
+	}
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		err = p.flush()
+	}
+	_ = p.r.Close()
+	p.m.drained(err)
+}
+
+// flush tees what the kernel already buffered without blocking, a grandchild still holding the write end must not stall Stop.
+func (p *matchPipe) flush() error {
+	if err := p.r.SetReadDeadline(time.Time{}); err != nil {
+		return err
+	}
+	rc, err := p.r.SyscallConn()
+	if err != nil {
+		return err
+	}
+	buf := make([]byte, 32*1024)
+	for {
+		var n int
+		var rerr error
+		if err := rc.Read(func(fd uintptr) bool {
+			n, rerr = syscall.Read(int(fd), buf)
+			return true
+		}); err != nil {
+			return err
+		}
+		switch {
+		case n > 0:
+			p.tee(buf[:n])
+		case rerr == nil, errors.Is(rerr, syscall.EAGAIN):
+			return nil
+		case errors.Is(rerr, syscall.EINTR):
+		default:
+			return rerr
+		}
+	}
+}
+
+func (p *matchPipe) tee(chunk []byte) {
+	if p.dst == nil || len(chunk) == 0 {
+		return
+	}
+	if _, err := p.dst.Write(chunk); err != nil {
+		p.m.fail(err)
+	}
+}
+
+func interfaceEqual(a, b any) bool {
+	defer func() { _ = recover() }()
+	return a == b
 }
