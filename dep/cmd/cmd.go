@@ -22,7 +22,9 @@ const (
 	ErrStopFailed     = strerr.Error("command didn't stop successfully")
 	ErrOptApply       = strerr.Error("failed apply Opt")
 	ErrNoMatchingLine = strerr.Error("no matching line found")
-	ErrNilCmdRegexp   = strerr.Error("command has to be set before this option can be applied, check the order of options")
+	ErrNilCmd         = strerr.Error("command has to be set before this option can be applied, check the order of options")
+	// Deprecated: use ErrNilCmd.
+	ErrNilCmdRegexp   = ErrNilCmd
 	ErrPreCmdFailed   = strerr.Error("pre command failed")
 	ErrBadRegexp      = strerr.Error("bad regular expression for matching line")
 	ErrOutputPipe     = strerr.Error("failed to acquire output pipe for command")
@@ -81,13 +83,20 @@ func (c *Cmd) Ready() error {
 	}
 }
 
+// Stop tolerates a missing command because the runner stops dependencies whose Start failed.
 func (c *Cmd) Stop() error {
+	if c.cmd == nil {
+		return nil
+	}
 	return c.wrapErr(ErrStopFailed, c.stop(c.cmd))
 }
 
 func (c *Cmd) wrapErr(wErr, err error) error {
 	if err == nil {
 		return nil
+	}
+	if c.cmd == nil {
+		return fmt.Errorf("%w: %w", wErr, err)
 	}
 	return fmt.Errorf("cmd '%s' %w: %w", c.cmd.String(), wErr, err)
 }
@@ -155,6 +164,7 @@ func WithReadyHTTP(url string) Opt {
 }
 
 // WithStopFn allows user to provide custom stop function.
+// The fn may receive a command that never started (Process == nil) and must tolerate it.
 func WithStopFn(fn func(*exec.Cmd) error) Opt {
 	return func(c *Cmd) error {
 		c.stop = fn
@@ -165,54 +175,54 @@ func WithStopFn(fn func(*exec.Cmd) error) Opt {
 // WithEnvSet sets environment variables for the command.
 // By default the command inherits the environment of the current process and setting this option will override it.
 func WithEnvSet(env ...string) Opt {
-	return func(c *Cmd) error {
+	return withCmd(func(c *Cmd) error {
 		c.cmd.Env = env
 		return nil
-	}
+	})
 }
 
 // WithEnvAppend adds environment variables to commands current env.
 // By default the command inherits the environment of the current process and setting this option will override it.
 func WithEnvAppend(env ...string) Opt {
-	return func(c *Cmd) error {
+	return withCmd(func(c *Cmd) error {
 		c.cmd.Env = append(c.cmd.Env, env...)
 		return nil
-	}
+	})
 }
 
 // WithArgsSet sets arguments for the command.
 func WithArgsSet(args ...string) Opt {
-	return func(c *Cmd) error {
+	return withCmd(func(c *Cmd) error {
 		c.cmd.Args = args
 		return nil
-	}
+	})
 }
 
 // WithArgsAppend adds arguments to commands current argument list.
 func WithArgsAppend(args ...string) Opt {
-	return func(c *Cmd) error {
+	return withCmd(func(c *Cmd) error {
 		c.cmd.Args = append(c.cmd.Args, args...)
 		return nil
-	}
+	})
 }
 
 // WithDir sets the working directory for the command.
 func WithDir(dir string) Opt {
-	return func(c *Cmd) error {
+	return withCmd(func(c *Cmd) error {
 		c.cmd.Dir = dir
 		return nil
-	}
+	})
 }
 
 // WithWaitMatchingLine sets the ready function so that it waits for the command to output a line that matches the given regular expression.
 func WithWaitMatchingLine(exp string) Opt {
-	return func(c *Cmd) error {
+	return withCmd(func(c *Cmd) error {
 		fn, err := MatchingLine(exp, c.cmd)
 		if err != nil {
 			return err
 		}
 		return WithReadyFn(fn)(c)
-	}
+	})
 }
 
 // WithReadyTimeout overrides the default 30s timeout for the ready function.
@@ -294,12 +304,21 @@ func WithGoCover() Opt {
 // WithGoCoverDir creates the dir if it doesn't exist and
 // appends the GOCOVERDIR env variable into the commands env.
 func WithGoCoverDir(dir string) Opt {
-	return func(c *Cmd) error {
+	return withCmd(func(c *Cmd) error {
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return fmt.Errorf("%w: %w", ErrCreateCoverDir, err)
 		}
 		c.cmd.Env = append(c.cmd.Env, "GOCOVERDIR="+dir)
 		return nil
+	})
+}
+
+func withCmd(fn func(*Cmd) error) Opt {
+	return func(c *Cmd) error {
+		if c.cmd == nil {
+			return ErrNilCmd
+		}
+		return fn(c)
 	}
 }
 
@@ -311,7 +330,7 @@ func StopWithSignal(s os.Signal) func(*exec.Cmd) error {
 			return nil
 		}
 		var err error
-		if c.Process != nil && c.ProcessState == nil {
+		if c.ProcessState == nil {
 			err = c.Process.Signal(s)
 		}
 		return errors.Join(err, c.Wait())
@@ -321,7 +340,7 @@ func StopWithSignal(s os.Signal) func(*exec.Cmd) error {
 // MatchLine waits for the command to output a line that matches the given regular expression.
 func MatchingLine(exp string, cmd *exec.Cmd) (func(context.Context, *exec.Cmd) error, error) {
 	if cmd == nil {
-		return nil, ErrNilCmdRegexp
+		return nil, ErrNilCmd
 	}
 
 	re, err := regexp.Compile(exp)
