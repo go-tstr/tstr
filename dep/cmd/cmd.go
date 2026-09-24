@@ -37,6 +37,9 @@ type Cmd struct {
 	ready        func(context.Context, *exec.Cmd) error
 	stop         func(*exec.Cmd) error
 	cmd          *exec.Cmd
+	envSet       []string
+	envIsSet     bool
+	envAppend    []string
 	readyTimeout time.Duration
 }
 
@@ -52,6 +55,7 @@ func New(opts ...Opt) *Cmd {
 }
 
 func (c *Cmd) Start() error {
+	c.envSet, c.envIsSet, c.envAppend = nil, false, nil
 	for _, opt := range c.opts {
 		if err := opt(c); err != nil {
 			return fmt.Errorf("%w: %w", ErrOptApply, err)
@@ -60,6 +64,16 @@ func (c *Cmd) Start() error {
 
 	if c.cmd == nil {
 		return ErrMissingCmd
+	}
+
+	// Resolved here so Environ sees the final Dir and the env options work in any order.
+	if c.envIsSet || len(c.envAppend) > 0 {
+		env := c.cmd.Environ()
+		if c.envIsSet {
+			env = c.envSet
+		}
+		env = append(env, c.envAppend...)
+		c.cmd.Env = env
 	}
 
 	return c.wrapErr(ErrStartFailed, c.cmd.Start())
@@ -172,22 +186,23 @@ func WithStopFn(fn func(*exec.Cmd) error) Opt {
 	}
 }
 
-// WithEnvSet sets environment variables for the command.
-// By default the command inherits the environment of the current process and setting this option will override it.
+// WithEnvSet replaces the inherited environment with the given variables.
+// Calling it with no arguments gives the command an empty environment.
 func WithEnvSet(env ...string) Opt {
-	return withCmd(func(c *Cmd) error {
-		c.cmd.Env = env
+	return func(c *Cmd) error {
+		c.envSet = append([]string{}, env...)
+		c.envIsSet = true
 		return nil
-	})
+	}
 }
 
-// WithEnvAppend adds environment variables to commands current env.
-// By default the command inherits the environment of the current process and setting this option will override it.
+// WithEnvAppend appends environment variables to the inherited environment or to the env set by WithEnvSet.
+// If the same variable appears multiple times, the last value wins.
 func WithEnvAppend(env ...string) Opt {
-	return withCmd(func(c *Cmd) error {
-		c.cmd.Env = append(c.cmd.Env, env...)
+	return func(c *Cmd) error {
+		c.envAppend = append(c.envAppend, env...)
 		return nil
-	})
+	}
 }
 
 // WithArgsSet sets arguments for the command.
@@ -304,13 +319,12 @@ func WithGoCover() Opt {
 // WithGoCoverDir creates the dir if it doesn't exist and
 // appends the GOCOVERDIR env variable into the commands env.
 func WithGoCoverDir(dir string) Opt {
-	return withCmd(func(c *Cmd) error {
+	return func(c *Cmd) error {
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return fmt.Errorf("%w: %w", ErrCreateCoverDir, err)
 		}
-		c.cmd.Env = append(c.cmd.Env, "GOCOVERDIR="+dir)
-		return nil
-	})
+		return WithEnvAppend("GOCOVERDIR=" + dir)(c)
+	}
 }
 
 func withCmd(fn func(*Cmd) error) Opt {

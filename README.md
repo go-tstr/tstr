@@ -168,6 +168,8 @@ func TestMain(m *testing.M) {
 }
 ```
 
+The command inherits the environment of the test process. `cmd.WithEnvAppend` adds variables on top of the inherited environment while `cmd.WithEnvSet` replaces it completely.
+
 ##### cmd.WithGoCode
 
 This example compiles `my-app` Go application, instruments it for coverage collections, waits for it to be ready and finally starts running tests.
@@ -178,7 +180,7 @@ func TestMain(m *testing.M) {
         cmd.New(
             cmd.WithGoCode("../", "./cmd/my-app"),
             cmd.WithReadyHTTP("http://localhost:8080/ready"),
-            cmd.WithEnvAppend("GOCOVERDIR=./cover"),
+            cmd.WithGoCoverDir("./cover"),
         ),
     ))
 }
