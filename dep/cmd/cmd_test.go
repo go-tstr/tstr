@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"syscall"
 	"testing"
 
@@ -85,7 +86,7 @@ func TestCmd(t *testing.T) {
 			err: cmd.ErrNilCmd,
 		},
 		{
-			name: "WithEnv",
+			name: "WithEnvSet",
 			cmd: cmd.New(
 				cmd.WithCommand("go", "env", "GOPRIVATE"),
 				cmd.WithEnvSet("GOPRIVATE=foo"),
@@ -94,7 +95,7 @@ func TestCmd(t *testing.T) {
 			),
 		},
 		{
-			name: "WithEnv",
+			name: "WithEnvAppend",
 			cmd: cmd.New(
 				cmd.WithCommand("go", "env", "GOPRIVATE"),
 				cmd.WithEnvAppend("GOPRIVATE=foo"),
@@ -141,20 +142,6 @@ func TestCmd(t *testing.T) {
 			err: cmd.ErrBadRegexp,
 		},
 		{
-			name: "WithEnvSet_NilCmd",
-			cmd: cmd.New(
-				cmd.WithEnvSet("FOO=bar"),
-			),
-			err: cmd.ErrNilCmd,
-		},
-		{
-			name: "WithEnvAppend_NilCmd",
-			cmd: cmd.New(
-				cmd.WithEnvAppend("FOO=bar"),
-			),
-			err: cmd.ErrNilCmd,
-		},
-		{
 			name: "WithArgsSet_NilCmd",
 			cmd: cmd.New(
 				cmd.WithArgsSet("version"),
@@ -172,13 +159,6 @@ func TestCmd(t *testing.T) {
 			name: "WithDir_NilCmd",
 			cmd: cmd.New(
 				cmd.WithDir(waitPkg),
-			),
-			err: cmd.ErrNilCmd,
-		},
-		{
-			name: "WithGoCoverDir_NilCmd",
-			cmd: cmd.New(
-				cmd.WithGoCoverDir(waitPkg),
 			),
 			err: cmd.ErrNilCmd,
 		},
@@ -233,6 +213,61 @@ func TestCmd_StopWithUnstartedProcess(t *testing.T) {
 	deptest.ErrorIs(t, c, nil, cmd.ErrStartFailed)
 	assert.True(t, called)
 	assert.NoError(t, c.Stop())
+}
+
+func TestWithEnvAppend_InheritsEnv(t *testing.T) {
+	t.Setenv("TSTR_TEST_INHERIT", "inherited")
+	c := cmd.New(
+		cmd.WithCommand("sh", "-c", "echo $TSTR_TEST_INHERIT $FOO"),
+		cmd.WithEnvAppend("FOO=bar"),
+		cmd.WithWaitMatchingLine("^inherited bar$"),
+		cmd.WithStopFn(func(c *exec.Cmd) error { return nil }),
+	)
+	deptest.ErrorIs(t, c, nil, nil)
+}
+
+func TestWithEnvAppend_LastValueWins(t *testing.T) {
+	t.Setenv("FOO", "old")
+	c := cmd.New(
+		cmd.WithCommand("sh", "-c", "echo $FOO"),
+		cmd.WithEnvAppend("FOO=bar"),
+		cmd.WithWaitMatchingLine("^bar$"),
+		cmd.WithStopFn(func(c *exec.Cmd) error { return nil }),
+	)
+	deptest.ErrorIs(t, c, nil, nil)
+}
+
+func TestWithEnvAppend_PWDFollowsDir(t *testing.T) {
+	dir := t.TempDir()
+	c := cmd.New(
+		cmd.WithCommand("sh", "-c", "echo $PWD"),
+		cmd.WithEnvAppend("FOO=bar"),
+		cmd.WithDir(dir),
+		cmd.WithWaitMatchingLine("^"+regexp.QuoteMeta(dir)+"$"),
+		cmd.WithStopFn(func(c *exec.Cmd) error { return nil }),
+	)
+	deptest.ErrorIs(t, c, nil, nil)
+}
+
+func TestWithEnvSet_BeforeCommand(t *testing.T) {
+	c := cmd.New(
+		cmd.WithEnvSet("FOO=bar"),
+		cmd.WithCommand("sh", "-c", "echo $FOO"),
+		cmd.WithWaitMatchingLine("^bar$"),
+		cmd.WithStopFn(func(c *exec.Cmd) error { return nil }),
+	)
+	deptest.ErrorIs(t, c, nil, nil)
+}
+
+func TestWithEnvSet_ReplacesEnv(t *testing.T) {
+	t.Setenv("TSTR_TEST_INHERIT", "inherited")
+	c := cmd.New(
+		cmd.WithCommand("sh", "-c", "echo x$TSTR_TEST_INHERIT"),
+		cmd.WithEnvSet("FOO=bar"),
+		cmd.WithWaitMatchingLine("^x$"),
+		cmd.WithStopFn(func(c *exec.Cmd) error { return nil }),
+	)
+	deptest.ErrorIs(t, c, nil, nil)
 }
 
 func TestCmd_WithGoCode_Coverage(t *testing.T) {
