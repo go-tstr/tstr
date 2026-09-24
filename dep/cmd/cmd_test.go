@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -135,6 +137,42 @@ func TestCmd(t *testing.T) {
 				cmd.WithCommand("./"+filepath.Base(waitBin)),
 				cmd.WithDir(filepath.Dir(waitBin)),
 				cmd.WithWaitMatchingLine("Waiting for signal"),
+			),
+		},
+		{
+			name: "MatchingLineStderr",
+			cmd: cmd.New(
+				cmd.WithCommand("sh", "-c", `trap "exit 0" INT; echo ready >&2; sleep 30 >/dev/null 2>&1 & wait`),
+				cmd.WithWaitMatchingLine("ready"),
+			),
+		},
+		{
+			name: "MatchingLineAfterLongLine",
+			cmd: cmd.New(
+				cmd.WithCommand("sh", "-c", `printf "%0100000d\nready\n" 0`),
+				cmd.WithWaitMatchingLine("ready"),
+			),
+		},
+		{
+			name: "MatchingLineOversizedDiscarded",
+			cmd: cmd.New(
+				cmd.WithCommand("sh", "-c", `trap "" INT; printf "%065531dready%d\n" 0 0`),
+				cmd.WithWaitMatchingLine("ready$"),
+			),
+			err: cmd.ErrNoMatchingLine,
+		},
+		{
+			name: "MatchingLineNoTrailingNewline",
+			cmd: cmd.New(
+				cmd.WithCommand("sh", "-c", `trap "" INT; printf ready`),
+				cmd.WithWaitMatchingLine("^ready$"),
+			),
+		},
+		{
+			name: "MatchingLineCRLF",
+			cmd: cmd.New(
+				cmd.WithCommand("sh", "-c", `trap "" INT; printf "ready\r\n"`),
+				cmd.WithWaitMatchingLine("^ready$"),
 			),
 		},
 		{
@@ -430,8 +468,113 @@ func TestStopGrandchildHoldsPipe(t *testing.T) {
 	assert.Less(t, time.Since(start), 5*time.Second)
 }
 
+func TestWithWaitMatchingLine_PassThrough(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	c := exec.Command("sh", "-c", `trap "" INT; echo ready; echo after; echo err >&2`)
+	c.Stdout = &stdout
+	c.Stderr = &stderr
+
+	deptest.ErrorIs(t, cmd.New(
+		cmd.WithExecCmd(c),
+		cmd.WithWaitMatchingLine("ready"),
+	), nil, nil)
+
+	assert.Equal(t, "ready\nafter\n", stdout.String())
+	assert.Equal(t, "err\n", stderr.String())
+}
+
+func TestWithWaitMatchingLine_SharedWriter(t *testing.T) {
+	var out bytes.Buffer
+	c := exec.Command("sh", "-c", `trap "" INT; echo ready; echo err >&2; echo after`)
+	c.Stdout = &out
+	c.Stderr = &out
+
+	deptest.ErrorIs(t, cmd.New(
+		cmd.WithExecCmd(c),
+		cmd.WithWaitMatchingLine("ready"),
+	), nil, nil)
+
+	assert.Equal(t, "ready\nerr\nafter\n", out.String())
+}
+
+func TestWithWaitMatchingLine_GrandchildOutlivesParent(t *testing.T) {
+	out := &syncBuffer{}
+	c := exec.Command("sh", "-c", `trap "" INT; (sleep 1; echo late) & echo ready; exit 0`)
+	c.Stdout = out
+
+	deptest.ErrorIs(t, cmd.New(
+		cmd.WithExecCmd(c),
+		cmd.WithWaitMatchingLine("ready"),
+	), func() {
+		assert.Eventually(t, func() bool { return strings.Contains(out.String(), "late") }, 3*time.Second, 10*time.Millisecond)
+	}, nil)
+}
+
+func TestWithWaitMatchingLine_StopDoesNotWaitForGrandchild(t *testing.T) {
+	c := cmd.New(
+		cmd.WithCommand("sh", "-c", `trap "exit 0" INT; echo ready; sleep 3 & wait`),
+		cmd.WithWaitMatchingLine("ready"),
+	)
+	require.NoError(t, c.Start())
+	require.NoError(t, c.Ready())
+
+	start := time.Now()
+	require.NoError(t, c.Stop())
+	assert.Less(t, time.Since(start), 2*time.Second)
+}
+
+func TestWithWaitMatchingLine_BlockingWriter(t *testing.T) {
+	pr, pw := io.Pipe()
+	t.Cleanup(func() { _ = pr.Close() })
+	ec := exec.Command("sh", "-c", "echo ready; sleep 30")
+	ec.Stdout = pw
+
+	c := cmd.New(
+		cmd.WithExecCmd(ec),
+		cmd.WithWaitMatchingLine("ready"),
+		cmd.WithStopTimeout(500*time.Millisecond),
+	)
+	require.NoError(t, c.Start())
+	require.NoError(t, c.Ready())
+
+	start := time.Now()
+	_ = c.Stop()
+	assert.Less(t, time.Since(start), 3*time.Second)
+}
+
+func TestWithWaitMatchingLine_GrandchildHoldsStdout(t *testing.T) {
+	c := cmd.New(
+		cmd.WithCommand("sh", "-c", "echo ready; sleep 30 & wait"),
+		cmd.WithWaitMatchingLine("ready"),
+		cmd.WithStopTimeout(500*time.Millisecond),
+	)
+	require.NoError(t, c.Start())
+	require.NoError(t, c.Ready())
+
+	start := time.Now()
+	_ = c.Stop()
+	assert.Less(t, time.Since(start), 5*time.Second)
+}
+
 func blockForever(context.Context, *exec.Cmd) error {
 	select {}
+}
+
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 // Signal fails with ErrProcessDone only once the background Wait has reaped the process
