@@ -12,10 +12,12 @@ import (
 )
 
 const (
-	ErrMissingTestFn     = strerr.Error("missing Opt for test function")
-	ErrOverwritingTestFn = strerr.Error("trying to overwrite test function")
-	ErrMissingNameField  = strerr.Error("missing field Name in test case struct")
-	ErrWrongTestCaseType = strerr.Error("wrong test case type")
+	ErrMissingTestFn      = strerr.Error("missing Opt for test function")
+	ErrOverwritingTestFn  = strerr.Error("trying to overwrite test function")
+	ErrMissingNameField   = strerr.Error("missing or ambiguous field Name in test case struct")
+	ErrWrongTestCaseType  = strerr.Error("wrong test case type")
+	ErrWrongNameFieldType = strerr.Error("field Name in test case struct must be a string")
+	ErrNilNameField       = strerr.Error("cannot read field Name in test case")
 )
 
 // TestingM contains required methods from *testing.M.
@@ -157,24 +159,34 @@ func WithFn(fn func()) Opt {
 }
 
 // WithTable runs the given test function for each test case in the table.
+// T must be a struct type with a string field Name which is used as the subtest name.
 func WithTable[T any](tt TestingT, cases []T, test func(*testing.T, T)) Opt {
 	return func(t *Tester) error {
-		if len(cases) > 0 {
-			el := reflect.ValueOf(&cases[0]).Elem()
-			if el.Kind() != reflect.Struct {
-				return fmt.Errorf("%w: expected struct, got %s", ErrWrongTestCaseType, el.Kind())
-			}
+		typ := reflect.TypeFor[T]()
+		if typ.Kind() != reflect.Struct {
+			return fmt.Errorf("%w: expected struct, got %s", ErrWrongTestCaseType, typ.Kind())
+		}
 
-			field := el.FieldByName("Name")
-			if !field.IsValid() {
-				return ErrMissingNameField
+		field, ok := typ.FieldByName("Name")
+		if !ok {
+			return ErrMissingNameField
+		}
+		if field.Type.Kind() != reflect.String {
+			return fmt.Errorf("%w: got %s", ErrWrongNameFieldType, field.Type)
+		}
+
+		names := make([]string, len(cases))
+		for i, tc := range cases {
+			name, err := reflect.ValueOf(tc).FieldByIndexErr(field.Index)
+			if err != nil {
+				return fmt.Errorf("%w at index %d: %w", ErrNilNameField, i, err)
 			}
+			names[i] = name.String()
 		}
 
 		return t.setTest(func() error {
-			for _, tc := range cases {
-				name := reflect.ValueOf(&tc).Elem().FieldByName("Name").String()
-				tt.Run(name, func(t *testing.T) {
+			for i, tc := range cases {
+				tt.Run(names[i], func(t *testing.T) {
 					test(t, tc)
 				})
 			}
