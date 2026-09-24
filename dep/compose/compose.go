@@ -9,7 +9,11 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-const ErrCreateStack = strerr.Error("failed to create compose stack")
+const (
+	ErrCreateStack  = strerr.Error("failed to create compose stack")
+	ErrMissingStack = strerr.Error("missing compose stack")
+	ErrNilStack     = strerr.Error("compose stack has to be set before this option can be applied, check the order of options")
+)
 
 // Opt is option type for OptCompose.
 type Opt func(*Compose) error
@@ -40,25 +44,35 @@ func (c *Compose) Start() error {
 			return fmt.Errorf("failed to apply option: %w", err)
 		}
 	}
+	if c.stack == nil {
+		return ErrMissingStack
+	}
 	return c.stack.Up(context.Background(), c.upOpts...)
 }
 
 func (c *Compose) Ready() error {
+	if c.stack == nil {
+		return ErrMissingStack
+	}
 	return c.ready(c.stack)
 }
 
+// Stop tolerates a nil stack because the runner stops dependencies whose Start failed.
 func (c *Compose) Stop() error {
+	if c.stack == nil {
+		return nil
+	}
 	return c.stack.Down(context.Background(), c.downOpts...)
 }
 
 // WithFile creates compose stack from file.
 func WithFile(file string) Opt {
 	return func(c *Compose) error {
-		var err error
-		c.stack, err = tc.NewDockerCompose(file)
+		stack, err := tc.NewDockerCompose(file)
 		if err != nil {
 			return fmt.Errorf("%w: %w", ErrCreateStack, err)
 		}
+		c.stack = stack
 		return nil
 	}
 }
@@ -66,6 +80,9 @@ func WithFile(file string) Opt {
 // WithStack sets ComposeStack.
 func WithStack(s tc.ComposeStack) Opt {
 	return func(c *Compose) error {
+		if s == nil {
+			return ErrNilStack
+		}
 		c.stack = s
 		return nil
 	}
@@ -89,26 +106,26 @@ func WithDownOptions(opts ...tc.StackDownOption) Opt {
 
 // WithWaitForService makes compose up wait for specific service with given strategy.
 func WithWaitForService(service string, strategy wait.Strategy) Opt {
-	return func(c *Compose) error {
-		c.stack.WaitForService(service, strategy)
+	return withStack(func(s tc.ComposeStack) error {
+		s.WaitForService(service, strategy)
 		return nil
-	}
+	})
 }
 
 // WithEnv sets environment variables for compose.
 func WithEnv(env map[string]string) Opt {
-	return func(c *Compose) error {
-		c.stack.WithEnv(env)
+	return withStack(func(s tc.ComposeStack) error {
+		s.WithEnv(env)
 		return nil
-	}
+	})
 }
 
 // WithOsEnv passes environment from OS to compose.
 func WithOsEnv() Opt {
-	return func(c *Compose) error {
-		c.stack.WithOsEnv()
+	return withStack(func(s tc.ComposeStack) error {
+		s.WithOsEnv()
 		return nil
-	}
+	})
 }
 
 // WithReadyFn sets ready function.
@@ -116,5 +133,14 @@ func WithReadyFn(fn func(tc.ComposeStack) error) Opt {
 	return func(c *Compose) error {
 		c.ready = fn
 		return nil
+	}
+}
+
+func withStack(fn func(tc.ComposeStack) error) Opt {
+	return func(c *Compose) error {
+		if c.stack == nil {
+			return ErrNilStack
+		}
+		return fn(c.stack)
 	}
 }

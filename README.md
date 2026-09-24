@@ -187,6 +187,7 @@ func TestMain(m *testing.M) {
 #### Custom Dependencies
 
 You can also create your own custom dependencies by implementing the `tstr.Dependency` interface.
+Note that `Stop` is called even when `Start` or `Ready` failed, so it must tolerate a dependency that never fully started.
 
 ```go
 type Custom struct{}
