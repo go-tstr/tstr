@@ -80,7 +80,7 @@ func TestMyFunc(t *testing.T) {
 
 ##### tstr.WithTable
 
-For table driven tests you can use `tstr.WithTable` which loops over the given test table and executes test function for each element using `t.Run`:
+For table driven tests you can use `tstr.WithTable` which loops over the given test table and executes test function for each element using `t.Run`. The test case type must be a struct with a string field `Name` which is used as the subtest name:
 
 ```go
 func TestMyFunc(t *testing.T) {
