@@ -20,14 +20,14 @@ func TestContainer(t *testing.T) {
 		{
 			name: "WithModule_error",
 			container: container.New(
-				container.WithModule(minio.Run, "minio/minio:non-existing-tag"),
+				container.WithModule(minio.Run, "quay.io/minio/minio:non-existing-tag"),
 			),
 			err: container.ErrCreateWithModule,
 		},
 		{
 			name: "WithModule_minio",
 			container: container.New(
-				container.WithModule(minio.Run, "minio/minio:RELEASE.2024-01-16T16-07-38Z"),
+				container.WithModule(minio.Run, "quay.io/minio/minio:RELEASE.2024-01-16T16-07-38Z"),
 				container.WithReadyFn(func(c testcontainers.Container) error {
 					_, err := c.ContainerIP(context.Background())
 					return err
