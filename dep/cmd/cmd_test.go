@@ -1,6 +1,7 @@
 package cmd_test
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -155,6 +156,29 @@ func TestCmd(t *testing.T) {
 			deptest.ErrorIs(t, tt.cmd, nil, tt.err)
 		})
 	}
+}
+
+func TestCmd_WithStdoutStderr(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	deptest.ErrorIs(t, cmd.New(
+		cmd.WithCommand("go", "env", "GOPRIVATE"),
+		cmd.WithEnvSet("GOPRIVATE=foo"),
+		cmd.WithStdout(&stdout),
+		cmd.WithStderr(&stderr),
+		cmd.WithWaitExit(),
+	), nil, nil)
+	assert.Equal(t, "foo\n", stdout.String())
+	assert.Empty(t, stderr.String())
+
+	stdout.Reset()
+	deptest.ErrorIs(t, cmd.New(
+		cmd.WithCommand("go", "foo"),
+		cmd.WithStdout(&stdout),
+		cmd.WithStderr(&stderr),
+		cmd.WithWaitExit(),
+	), nil, cmd.ErrReadyFailed)
+	assert.Empty(t, stdout.String())
+	assert.Contains(t, stderr.String(), "unknown command")
 }
 
 func TestWithReadyHTTP(t *testing.T) {
