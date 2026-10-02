@@ -7,7 +7,6 @@ import (
 	"github.com/go-tstr/tstr/dep/container"
 	"github.com/go-tstr/tstr/dep/deptest"
 	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/minio"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
@@ -20,14 +19,14 @@ func TestContainer(t *testing.T) {
 		{
 			name: "WithModule_error",
 			container: container.New(
-				container.WithModule(minio.Run, "quay.io/minio/minio:non-existing-tag"),
+				container.WithModule(postgres.Run, "postgres:non-existing-tag"),
 			),
 			err: container.ErrCreateWithModule,
 		},
 		{
-			name: "WithModule_minio",
+			name: "WithModule_ready_fn",
 			container: container.New(
-				container.WithModule(minio.Run, "quay.io/minio/minio:RELEASE.2024-01-16T16-07-38Z"),
+				container.WithModule(postgres.Run, "postgres:16-alpine"),
 				container.WithReadyFn(func(c testcontainers.Container) error {
 					_, err := c.ContainerIP(context.Background())
 					return err
