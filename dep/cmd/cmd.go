@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -200,6 +201,23 @@ func WithArgsAppend(args ...string) Opt {
 func WithDir(dir string) Opt {
 	return func(c *Cmd) error {
 		c.cmd.Dir = dir
+		return nil
+	}
+}
+
+// WithStdout sets the writer for the command's stdout, which is os.Stdout by default.
+// WithWaitMatchingLine reads stdout itself, so the two cannot be combined.
+func WithStdout(w io.Writer) Opt {
+	return func(c *Cmd) error {
+		c.cmd.Stdout = w
+		return nil
+	}
+}
+
+// WithStderr sets the writer for the command's stderr, which is os.Stderr by default.
+func WithStderr(w io.Writer) Opt {
+	return func(c *Cmd) error {
+		c.cmd.Stderr = w
 		return nil
 	}
 }
