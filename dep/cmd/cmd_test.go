@@ -82,7 +82,7 @@ func TestCmd(t *testing.T) {
 			cmd: cmd.New(
 				cmd.WithWaitMatchingLine("not matching line"),
 			),
-			err: cmd.ErrNilCmdRegexp,
+			err: cmd.ErrNilCmd,
 		},
 		{
 			name: "WithEnv",
@@ -141,6 +141,48 @@ func TestCmd(t *testing.T) {
 			err: cmd.ErrBadRegexp,
 		},
 		{
+			name: "WithEnvSet_NilCmd",
+			cmd: cmd.New(
+				cmd.WithEnvSet("FOO=bar"),
+			),
+			err: cmd.ErrNilCmd,
+		},
+		{
+			name: "WithEnvAppend_NilCmd",
+			cmd: cmd.New(
+				cmd.WithEnvAppend("FOO=bar"),
+			),
+			err: cmd.ErrNilCmd,
+		},
+		{
+			name: "WithArgsSet_NilCmd",
+			cmd: cmd.New(
+				cmd.WithArgsSet("version"),
+			),
+			err: cmd.ErrNilCmd,
+		},
+		{
+			name: "WithArgsAppend_NilCmd",
+			cmd: cmd.New(
+				cmd.WithArgsAppend("version"),
+			),
+			err: cmd.ErrNilCmd,
+		},
+		{
+			name: "WithDir_NilCmd",
+			cmd: cmd.New(
+				cmd.WithDir(waitPkg),
+			),
+			err: cmd.ErrNilCmd,
+		},
+		{
+			name: "WithGoCoverDir_NilCmd",
+			cmd: cmd.New(
+				cmd.WithGoCoverDir(waitPkg),
+			),
+			err: cmd.ErrNilCmd,
+		},
+		{
 			name: "WithGoCode_BuildFailure",
 			cmd: cmd.New(
 				cmd.WithGoCode(waitPkg, "./non/existing/pkg"),
@@ -166,6 +208,31 @@ func TestWithReadyHTTP(t *testing.T) {
 		cmd.WithStopFn(func(c *exec.Cmd) error { return nil }),
 	)
 	deptest.ErrorIs(t, c, nil, nil)
+}
+
+func TestCmd_StopWithNilCmd(t *testing.T) {
+	called := false
+	c := cmd.New(
+		cmd.WithStopFn(func(ec *exec.Cmd) error { called = true; return ec.Process.Kill() }),
+	)
+	deptest.ErrorIs(t, c, nil, cmd.ErrMissingCmd)
+	assert.False(t, called)
+	assert.NoError(t, c.Stop())
+}
+
+func TestCmd_StopWithUnstartedProcess(t *testing.T) {
+	called := false
+	c := cmd.New(
+		cmd.WithCommand("non-existing-command"),
+		cmd.WithStopFn(func(c *exec.Cmd) error {
+			called = true
+			assert.Nil(t, c.Process)
+			return nil
+		}),
+	)
+	deptest.ErrorIs(t, c, nil, cmd.ErrStartFailed)
+	assert.True(t, called)
+	assert.NoError(t, c.Stop())
 }
 
 func TestCmd_WithGoCode_Coverage(t *testing.T) {
