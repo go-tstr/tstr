@@ -59,6 +59,52 @@ func TestCompose(t *testing.T) {
 	}
 }
 
+func TestCompose_OptionErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		compose *compose.Compose
+		err     error
+	}{
+		{
+			name:    "MissingStack",
+			compose: compose.New(),
+			err:     compose.ErrMissingStack,
+		},
+		{
+			name:    "WithStack_Nil",
+			compose: compose.New(compose.WithStack(nil)),
+			err:     compose.ErrNilStack,
+		},
+		{
+			name: "WithEnv_NilStack",
+			compose: compose.New(
+				compose.WithEnv(map[string]string{"DB_PORT": "5432"}),
+			),
+			err: compose.ErrNilStack,
+		},
+		{
+			name: "WithOsEnv_NilStack",
+			compose: compose.New(
+				compose.WithOsEnv(),
+			),
+			err: compose.ErrNilStack,
+		},
+		{
+			name: "WithWaitForService_NilStack",
+			compose: compose.New(
+				compose.WithWaitForService("postgres", wait.ForLog("ready")),
+			),
+			err: compose.ErrNilStack,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deptest.ErrorIs(t, tt.compose, nil, tt.err)
+		})
+	}
+}
+
 const composeFile = `
 services:
   postgres:

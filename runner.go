@@ -70,6 +70,7 @@ type Startable interface {
 	Ready() error
 }
 
+// Stoppable is stopped by the runner even when its Start or Ready failed, so Stop must tolerate that.
 type Stoppable interface {
 	Stop() error
 }
