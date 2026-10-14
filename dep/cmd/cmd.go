@@ -313,7 +313,7 @@ func WithGoCover() Opt {
 // appends the GOCOVERDIR env variable into the commands env.
 func WithGoCoverDir(dir string) Opt {
 	return func(c *Cmd) error {
-		if err := os.MkdirAll(dir, 0o750); err != nil {
+		if err := os.MkdirAll(dir, 0o750); err != nil { //nolint:gosec // dir is an explicit caller-provided path
 			return fmt.Errorf("%w: %w", ErrCreateCoverDir, err)
 		}
 		c.cmd.Env = append(c.cmd.Env, "GOCOVERDIR="+dir)
@@ -336,7 +336,7 @@ func StopWithSignal(s os.Signal) func(*exec.Cmd) error {
 	}
 }
 
-// MatchLine waits for the command to output a line that matches the given regular expression.
+// MatchingLine waits for the command to output a line that matches the given regular expression.
 func MatchingLine(exp string, cmd *exec.Cmd) (func(context.Context, *exec.Cmd) error, error) {
 	if cmd == nil {
 		return nil, ErrNilCmdRegexp
