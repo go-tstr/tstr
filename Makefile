@@ -1,5 +1,7 @@
 .PHONY: test clean
 
+GO_VERSION ?= $(shell go env GOVERSION | sed 's/^go//')
+
 all: clean lint test
 
 .PHONY: lint
@@ -13,3 +15,9 @@ test: ## Run tests
 .PHONY: clean
 clean: ## Clean files
 	git clean -Xdf
+
+.PHONY: update-deps
+update-deps: ## Update Go version, tools, and deps
+	go mod edit -go=${GO_VERSION}
+	go get $$(go mod edit -json | jq -r '[(.Tool[]?.Path), (.Require[]? | select(.Indirect | not) | .Path)] | map(. + "@latest") | .[]')
+	go mod tidy
