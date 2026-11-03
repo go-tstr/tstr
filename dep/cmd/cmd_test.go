@@ -211,6 +211,68 @@ func TestCmd_WithGoCode_Coverage(t *testing.T) {
 	require.Len(t, files, 2)
 }
 
+func TestCmd_WithCleanup(t *testing.T) {
+	var calls []int
+	c := cmd.New(
+		cmd.WithCommand("go", "version"),
+		cmd.WithWaitExit(),
+		cmd.WithCleanup(func() error { calls = append(calls, 1); return nil }),
+		cmd.WithCleanup(func() error { calls = append(calls, 2); return nil }),
+	)
+	deptest.ErrorIs(t, c, nil, nil)
+	assert.Equal(t, []int{2, 1}, calls)
+}
+
+func TestCmd_WithCleanup_Error(t *testing.T) {
+	c := cmd.New(
+		cmd.WithCommand("go", "version"),
+		cmd.WithWaitExit(),
+		cmd.WithCleanup(func() error { return assert.AnError }),
+	)
+	require.NoError(t, c.Start())
+	require.NoError(t, c.Ready())
+	err := c.Stop()
+	require.ErrorIs(t, err, cmd.ErrCleanupFailed)
+	require.ErrorIs(t, err, assert.AnError)
+}
+
+func TestCmd_WithGoCode_RemovesBuildDir(t *testing.T) {
+	waitPkg := prepareCode(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+
+	c := cmd.New(
+		cmd.WithGoCode(waitPkg, "./"),
+		cmd.WithWaitMatchingLine("Waiting for signal"),
+	)
+
+	// Run twice to verify the binary is rebuilt after cleanup.
+	for range 2 {
+		require.NoError(t, c.Start())
+		require.Len(t, buildDirs(t, tmp), 1)
+		require.NoError(t, c.Ready())
+		require.NoError(t, c.Stop())
+		require.Empty(t, buildDirs(t, tmp))
+	}
+}
+
+func TestCmd_WithGoCode_BuildFailureRemovesBuildDir(t *testing.T) {
+	waitPkg := prepareCode(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+
+	c := cmd.New(cmd.WithGoCode(waitPkg, "./non/existing/pkg"))
+	require.ErrorIs(t, c.Start(), cmd.ErrBuildFailed)
+	require.Empty(t, buildDirs(t, tmp))
+}
+
+func buildDirs(t *testing.T, tmp string) []string {
+	t.Helper()
+	dirs, err := filepath.Glob(filepath.Join(tmp, "go-tstr*"))
+	require.NoError(t, err)
+	return dirs
+}
+
 func blockForever(context.Context, *exec.Cmd) error {
 	select {}
 }
