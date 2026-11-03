@@ -29,6 +29,7 @@ const (
 	ErrOutputPipe     = strerr.Error("failed to acquire output pipe for command")
 	ErrBuildFailed    = strerr.Error("failed to build go binary")
 	ErrCreateCoverDir = strerr.Error("failed create coverage dir")
+	ErrCleanupFailed  = strerr.Error("cleanup failed")
 )
 
 type Cmd struct {
@@ -37,6 +38,7 @@ type Cmd struct {
 	stop         func(*exec.Cmd) error
 	cmd          *exec.Cmd
 	readyTimeout time.Duration
+	cleanups     []func() error
 }
 
 type Opt func(*Cmd) error
@@ -82,8 +84,25 @@ func (c *Cmd) Ready() error {
 	}
 }
 
+// Stop stops the command and then runs registered cleanup functions in reverse order.
 func (c *Cmd) Stop() error {
-	return c.wrapErr(ErrStopFailed, c.stop(c.cmd))
+	err := c.wrapErr(ErrStopFailed, c.stop(c.cmd))
+	for i := len(c.cleanups) - 1; i >= 0; i-- {
+		if cErr := c.cleanups[i](); cErr != nil {
+			err = errors.Join(err, fmt.Errorf("%w: %w", ErrCleanupFailed, cErr))
+		}
+	}
+	c.cleanups = nil
+	return err
+}
+
+// WithCleanup registers fn to be called when the command is stopped.
+// Cleanup functions are called in reverse order of registration.
+func WithCleanup(fn func() error) Opt {
+	return func(c *Cmd) error {
+		c.cleanups = append(c.cleanups, fn)
+		return nil
+	}
 }
 
 func (c *Cmd) wrapErr(wErr, err error) error {
@@ -263,12 +282,13 @@ func WithExecCmd(cmd *exec.Cmd) Opt {
 // By default the output binary is instrumented to collect coverage data
 // Working directory for build command is set to modulePath which means that the mainPkg should be relative to it.
 // Building the binary is done in a separate goroutine and the command is started only after the build is finished.
-// Also building is done only once which allows to reuse the reusing the same Cmd instance without rebuilding the binary.
+// The binary is built into a temporary directory which is removed when the command is stopped.
+// If the same Cmd instance is started again after being stopped, the binary is rebuilt.
 func WithGoCode(modulePath, mainPkg string) Opt {
-	var target string
-	eg := &errgroup.Group{}
-	eg.Go(func() error {
-		dir, err := os.MkdirTemp("", "go-tstr")
+	var dir, target string
+	build := func() error {
+		var err error
+		dir, err = os.MkdirTemp("", "go-tstr")
 		if err != nil {
 			return fmt.Errorf("failed to create tmp dir for go binary: %w", err)
 		}
@@ -279,18 +299,28 @@ func WithGoCode(modulePath, mainPkg string) Opt {
 		buildCmd.Stdout = os.Stdout
 		buildCmd.Stderr = os.Stderr
 		buildCmd.Dir = modulePath
-		err = buildCmd.Run()
-		if err != nil {
-			return fmt.Errorf("%w: %w", ErrBuildFailed, err)
+		if err := buildCmd.Run(); err != nil {
+			return errors.Join(fmt.Errorf("%w: %w", ErrBuildFailed, err), os.RemoveAll(dir))
 		}
 		return nil
-	})
+	}
+
+	eg := &errgroup.Group{}
+	eg.Go(build)
 
 	return func(c *Cmd) error {
 		if err := eg.Wait(); err != nil {
 			return err
 		}
 
+		if _, err := os.Stat(target); err != nil {
+			if err := build(); err != nil {
+				return err
+			}
+		}
+
+		buildDir := dir
+		c.cleanups = append(c.cleanups, func() error { return os.RemoveAll(buildDir) })
 		c.cmd = exec.Command(target)
 		c.cmd.Stdout = os.Stdout
 		c.cmd.Stderr = os.Stderr
