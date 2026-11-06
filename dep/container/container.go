@@ -15,9 +15,10 @@ const (
 )
 
 type Container struct {
-	opts  []Opt
-	c     testcontainers.Container
-	ready func(testcontainers.Container) error
+	opts          []Opt
+	c             testcontainers.Container
+	ready         func(testcontainers.Container) error
+	terminateOpts []testcontainers.TerminateOption
 }
 
 type Opt func(*Container) error
@@ -43,7 +44,7 @@ func (c *Container) Ready() error {
 }
 
 func (c *Container) Stop() error {
-	return testcontainers.TerminateContainer(c.c)
+	return testcontainers.TerminateContainer(c.c, c.terminateOpts...)
 }
 
 // Container returns the underlying testcontainers.Container.
@@ -55,6 +56,14 @@ func (c *Container) Container() testcontainers.Container {
 func WithReadyFn(fn func(testcontainers.Container) error) Opt {
 	return func(c *Container) error {
 		c.ready = fn
+		return nil
+	}
+}
+
+// WithTerminateOptions sets options for testcontainers.TerminateContainer() called by Stop().
+func WithTerminateOptions(opts ...testcontainers.TerminateOption) Opt {
+	return func(c *Container) error {
+		c.terminateOpts = opts
 		return nil
 	}
 }
