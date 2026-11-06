@@ -3,9 +3,12 @@ package container_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/go-tstr/tstr/dep/container"
 	"github.com/go-tstr/tstr/dep/deptest"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 )
@@ -77,4 +80,22 @@ func TestContainer(t *testing.T) {
 			deptest.ErrorIs(t, tt.container, nil, tt.err)
 		})
 	}
+}
+
+func TestContainer_WithTerminateOptions(t *testing.T) {
+	c := container.New(
+		container.WithGenericContainer(testcontainers.GenericContainerRequest{
+			ContainerRequest: testcontainers.ContainerRequest{
+				Image: "postgres:16-alpine",
+				// sleep runs as PID 1 and ignores SIGTERM, so without the option Stop waits Docker's 10s default.
+				Cmd: []string{"sleep", "3600"},
+			},
+			Started: true,
+		}),
+		container.WithTerminateOptions(testcontainers.StopTimeout(0)),
+	)
+	require.NoError(t, c.Start())
+	start := time.Now()
+	require.NoError(t, c.Stop())
+	assert.Less(t, time.Since(start), 5*time.Second)
 }
