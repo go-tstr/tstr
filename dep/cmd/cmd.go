@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"sync"
 	"time"
 
 	"github.com/go-tstr/tstr/strerr"
@@ -282,10 +283,15 @@ func WithExecCmd(cmd *exec.Cmd) Opt {
 // By default the output binary is instrumented to collect coverage data
 // Working directory for build command is set to modulePath which means that the mainPkg should be relative to it.
 // Building the binary is done in a separate goroutine and the command is started only after the build is finished.
-// The binary is built into a temporary directory which is removed when the command is stopped.
-// If the same Cmd instance is started again after being stopped, the binary is rebuilt.
+// The binary is built into a temporary directory which is removed when the last command using the option is stopped.
+// Commands sharing one option share the build. A command started after the removal rebuilds the binary.
+// To build only once, keep one command using the option started for the whole test run, for example in TestMain.
 func WithGoCode(modulePath, mainPkg string) Opt {
-	var dir, target string
+	var (
+		mu          sync.Mutex
+		dir, target string
+		users       int
+	)
 	build := func() error {
 		var err error
 		dir, err = os.MkdirTemp("", "go-tstr")
@@ -313,14 +319,23 @@ func WithGoCode(modulePath, mainPkg string) Opt {
 			return err
 		}
 
+		mu.Lock()
+		defer mu.Unlock()
 		if _, err := os.Stat(target); err != nil {
 			if err := build(); err != nil {
 				return err
 			}
 		}
 
-		buildDir := dir
-		c.cleanups = append(c.cleanups, func() error { return os.RemoveAll(buildDir) })
+		users++
+		c.cleanups = append(c.cleanups, func() error {
+			mu.Lock()
+			defer mu.Unlock()
+			if users--; users > 0 {
+				return nil
+			}
+			return os.RemoveAll(dir)
+		})
 		c.cmd = exec.Command(target)
 		c.cmd.Stdout = os.Stdout
 		c.cmd.Stderr = os.Stderr

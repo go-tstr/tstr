@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"testing"
 
@@ -254,6 +255,50 @@ func TestCmd_WithGoCode_RemovesBuildDir(t *testing.T) {
 		require.NoError(t, c.Stop())
 		require.Empty(t, buildDirs(t, tmp))
 	}
+}
+
+func TestCmd_WithGoCode_SharedBuild(t *testing.T) {
+	waitPkg := prepareCode(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+
+	shared := cmd.WithGoCode(waitPkg, "./")
+	first := cmd.New(shared, cmd.WithWaitMatchingLine("Waiting for signal"))
+	second := cmd.New(shared, cmd.WithWaitMatchingLine("Waiting for signal"))
+
+	require.NoError(t, first.Start())
+	built := buildDirs(t, tmp)
+	require.Len(t, built, 1)
+	require.NoError(t, first.Ready())
+
+	require.NoError(t, second.Start())
+	require.Equal(t, built, buildDirs(t, tmp), "the second command reuses the build")
+	require.NoError(t, second.Ready())
+	require.NoError(t, second.Stop())
+	require.Equal(t, built, buildDirs(t, tmp), "the build stays while another command uses it")
+
+	require.NoError(t, first.Stop())
+	require.Empty(t, buildDirs(t, tmp))
+}
+
+func TestCmd_WithGoCode_SharedBuildParallel(t *testing.T) {
+	waitPkg := prepareCode(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+
+	shared := cmd.WithGoCode(waitPkg, "./")
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Go(func() {
+			c := cmd.New(shared, cmd.WithWaitMatchingLine("Waiting for signal"))
+			if assert.NoError(t, c.Start()) {
+				assert.NoError(t, c.Ready())
+			}
+			assert.NoError(t, c.Stop())
+		})
+	}
+	wg.Wait()
+	require.Empty(t, buildDirs(t, tmp))
 }
 
 func TestCmd_WithGoCode_BuildFailureRemovesBuildDir(t *testing.T) {
