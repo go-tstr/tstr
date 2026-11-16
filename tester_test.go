@@ -1,11 +1,28 @@
 package tstr_test
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/go-tstr/tstr"
+	"github.com/go-tstr/tstr/dep/depfn"
 	"github.com/stretchr/testify/assert"
 )
+
+func TestRun_StopsDepsWhenTestFnExitsEarly(t *testing.T) {
+	var stopped bool
+	dep := depfn.New(nil, nil, func() error { stopped = true; return nil })
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// t.FailNow, which a failed require calls, ends the goroutine the same way.
+		_ = tstr.Run(tstr.WithDeps(dep), tstr.WithFn(runtime.Goexit))
+	}()
+	<-done
+
+	assert.True(t, stopped)
+}
 
 func TestRun_Errors(t *testing.T) {
 	tests := []struct {

@@ -104,14 +104,15 @@ func (t *Tester) Init() error {
 }
 
 // Run starts the test dependencies, executes the test function and finally stops the dependencies.
-func (t *Tester) Run() error {
+// The dependencies are stopped also when the test function exits early, for example through t.FailNow.
+func (t *Tester) Run() (err error) {
 	r := NewRunner(t.deps...)
-	if err := r.Start(); err != nil {
-		return errors.Join(err, r.Stop())
-	}
+	defer func() { err = errors.Join(err, r.Stop()) }()
 
-	err := t.test()
-	return errors.Join(err, r.Stop())
+	if err := r.Start(); err != nil {
+		return err
+	}
+	return t.test()
 }
 
 func (t *Tester) setTest(fn func() error) error {
